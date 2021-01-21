@@ -14,7 +14,7 @@ type Label = String
 data Type 
   = TInt 
   | TBool 
-  | TFun Type Type 
+  | TFun Type Type
   | TPair Type Type
   | TRecord TRecord
   deriving (Eq, Show) 
@@ -39,12 +39,8 @@ data Expr
   | EApp  Expr Expr          -- ^ 'EApp e1 e2'    is 'e1 e2' 
   | EPair Expr Expr          -- ^ 'EPair e1 e2'   is '(e1, e2)'
   | EFst Expr                -- ^ 'EFst e1'       is 'fst e1'
-  | ERecord ERecord          -- ^ 'ERecord [(l1,e1),(l2,e2)...]'       is '{l1: e1, l2: e2, ...}'
-  deriving (Eq, Show) 
-
-data ERecord
-  = ERecordBind Label Expr ERecord
-  | ERecordEmp
+  | ERecordBind Label Expr Expr
+  | ERecordEmp               -- ^ 'ERecordEmp'    is '{}'
   deriving (Eq, Show) 
 
 data Val 
@@ -52,11 +48,7 @@ data Val
   | VInt  Int
   | VClos Var Var Expr VEnv
   | VPair Val Val
-  | VRecord VRecord
-  deriving (Eq, Show) 
-
-data VRecord
-  = VRecordBind Label Val VRecord
+  | VRecordBind Label Val Val
   | VRecordEmp
   deriving (Eq, Show) 
 
@@ -116,7 +108,8 @@ eval s (EFun f x t e) = Result (VClos f x e s)
 eval s (EApp e1 e2)   = seq2 evalApp (eval s e1) (eval s e2)
 eval s (EPair e1 e2)  = seq2 evalPair (eval s e1) (eval s e2)
 eval s (EFst e)       = mapResult evalFst (eval s e)
-eval s (ERecord er)   = evalRecord s er
+eval s (ERecordBind l e er)   = seq2 (evalRecord l) (eval s e) (eval s er)
+eval s ERecordEmp = Result VRecordEmp
 
 {-@ reflect evalPair @-}
 evalPair :: Val -> Val -> Result
@@ -133,14 +126,10 @@ evalFst (VPair v1 _) = Result v1
 evalFst _ = Stuck
 
 {-@ reflect evalRecord @-}
-evalRecord :: VEnv -> ERecord -> Result
-evalRecord s (ERecordBind l e er) = mapResult go (evalRecord s er)
-  where
-    go (VRecord vr) = mapResult (makeRecord vr) (eval s e)
-    go _ = Stuck
-    -- flipped for use with 'mapResult'
-    makeRecord vr val = Result (VRecord (VRecordBind l val vr))
-evalRecord _ ERecordEmp = Result (VRecord VRecordEmp)
+evalRecord :: Label -> Val -> Val -> Result
+evalRecord l v vr@(VRecordBind _ _ _) = Result (VRecordBind l v vr)
+evalRecord l v vr@(VRecordEmp) = Result (VRecordBind l v vr)
+evalRecord _ v _ = Stuck
 
 {-@ reflect evalOp @-}
 evalOp :: Op -> Val -> Val -> Result 
@@ -204,9 +193,17 @@ data ResTy where
     --------------------------------------- [V_Clos]
       |- VClos f x e s : t1 -> t2 
 
-           v1 : t1, v2 : t2
+          |- v1 : t1  |- v2 : t2
     ------------------------------ [V_Pair]
       |- VPair (v1, t1) : (t1, t2)
+
+    --------------------------------------- [V_RecordEmp]
+      |- VRecordEmp : TRecord (TRecordEmp)
+
+      |- val : t     |- vr : (TRecord tr) 
+    ---------------------------------------- [V_RecordBind]
+      |- VRecordBind l val vr : TRecord (TRecordBind l t tr)
+    
  -}
 
 {-@ data ValTy where
@@ -220,9 +217,11 @@ data ResTy where
                -> Prop (ValTy v1 t1) 
                -> Prop (ValTy v2 t2)
                -> Prop (ValTy (VPair v1 v2) (TPair t1 t2))
-      | V_Record :: vr:VRecord -> tr:TRecord
-                 -> Prop (ValTyRecord vr tr)
-                 -> Prop (ValTy (VRecord vr) (TRecord tr))
+      | V_RecordBind :: l:Label -> val:Val -> rcd:Val -> t:Type -> tr:TRecord
+                     -> Prop (ValTy val t)
+                     -> Prop (ValTy rcd (TRecord tr))
+                     -> Prop (ValTy (VRecordBind l val rcd) (TRecord (TRecordBind l t tr)))
+      | V_RecordEmp :: Prop (ValTy VRecordEmp (TRecord TRecordEmp))
   @-}
 
 data ValTyP where 
@@ -233,22 +232,8 @@ data ValTy where
   V_Int    :: Int  -> ValTy 
   V_Clos   :: TEnv -> VEnv -> Var -> Var -> Type -> Type -> Expr -> StoTy -> ExprTy  -> ValTy 
   V_Pair   :: Val -> Val -> Type -> Type -> ValTy -> ValTy -> ValTy
-  V_Record :: VRecord -> TRecord -> ValTyRecord -> ValTy
-
-{-@ data ValTyRecord where
-        VR_Emp  :: Prop (ValTyRecord VRecordEmp TRecordEmp)
-      | VR_Bind :: l:Label -> val:Val -> t:Type -> vr:VRecord -> tr:TRecord
-                -> Prop (ValTy val t)
-                -> Prop (ValTyRecord vr tr)
-                -> Prop (ValTyRecord (VRecordBind l val vr) (TRecordBind l t tr))
-  @-}
-
-data ValTyRecordP where
-  ValTyRecord :: VRecord -> TRecord -> ValTyRecordP
-
-data ValTyRecord where
-  VR_Emp  :: ValTyRecord
-  VR_Bind :: Label -> Val -> Type -> VRecord -> TRecord -> ValTy -> ValTyRecord -> ValTyRecord
+  V_RecordBind :: Label -> Val -> Val -> Type -> TRecord -> ValTy -> ValTy -> ValTy
+  V_RecordEmp :: ValTy
 
 --------------------------------------------------------------------------------
 -- | Typing Stores 
@@ -327,6 +312,13 @@ lookupTEnv x (TBind y v env)  = if x == y then Just v else lookupTEnv x env
   --------------------------------------[E-App]
     G |- EApp e1 e2 : t2 
 
+  --------------------------------------[E-RecordEmp]
+    G |- ERecordEmp : TRecord TRecordEmp
+
+    G |- e : t   G |- er : TRecord tr
+  --------------------------------------[E-RecordBind]
+    G |- ERecordBind l e er : TRecord (TRecordBind l t tr)
+
 -}
 
 {-@ data ExprTy where 
@@ -354,9 +346,11 @@ lookupTEnv x (TBind y v env)  = if x == y then Just v else lookupTEnv x env
       | E_Fst  :: g:TEnv -> e:Expr -> t1:Type -> t2:Type
                -> Prop (ExprTy g e (TPair t1 t2))
                -> Prop (ExprTy g (EFst e) t1)
-      | E_Record :: g:TEnv -> er:ERecord -> tr:TRecord
-                 -> Prop (ExprTyRecord g er tr)
-                 -> Prop (ExprTy g (ERecord er) (TRecord tr))
+      | E_RecordBind :: g:TEnv -> l:Label -> e:Expr -> er:Expr -> t:Type -> tr:TRecord
+                     -> Prop (ExprTy g e t)
+                     -> Prop (ExprTy g er (TRecord tr))
+                     -> Prop (ExprTy g (ERecordBind l e er) (TRecord (TRecordBind l t tr)))
+      | E_RecordEmp :: g:TEnv -> Prop (ExprTy g ERecordEmp (TRecord TRecordEmp))
   @-}
 data ExprTyP where 
   ExprTy :: TEnv -> Expr -> Type -> ExprTyP  
@@ -370,22 +364,8 @@ data ExprTy where
   E_App    :: TEnv -> Expr -> Expr -> Type -> Type -> ExprTy -> ExprTy -> ExprTy 
   E_Pair   :: TEnv -> Expr -> Expr -> Type -> Type -> ExprTy -> ExprTy -> ExprTy
   E_Fst    :: TEnv -> Expr -> Type -> Type -> ExprTy -> ExprTy
-  E_Record :: TEnv -> ERecord -> TRecord -> ExprTyRecord -> ExprTy
-
-{-@ data ExprTyRecord where
-        ER_Emp  :: g:TEnv -> Prop (ExprTyRecord g ERecordEmp TRecordEmp)
-      | ER_Bind :: g:TEnv -> l:Label -> e:Expr -> t:Type -> er:ERecord -> tr:TRecord
-                -> Prop (ExprTy g e t)
-                -> Prop (ExprTyRecord g er tr)
-                -> Prop (ExprTyRecord g (ERecordBind l e er) (TRecordBind l t tr))
-  @-}
-
-data ExprTyRecordP where
-  ExprTyRecord :: TEnv -> ERecord -> TRecord -> ExprTyRecordP
-
-data ExprTyRecord where
-  ER_Emp  :: TEnv -> ExprTyRecord
-  ER_Bind :: TEnv -> Label -> Expr -> Type -> ERecord -> TRecord -> ExprTy -> ExprTyRecord -> ExprTyRecord
+  E_RecordBind :: TEnv -> Label -> Expr -> Expr -> Type -> TRecord -> ExprTy -> ExprTy -> ExprTy
+  E_RecordEmp :: TEnv -> ExprTy
 
 --------------------------------------------------------------------------------
 -- | Lemma 1: "evalOp_safe" 
@@ -474,7 +454,10 @@ evalApp_safe (VBool {}) _ _ _ (V_Clos {}) _
 evalApp_safe (VPair {}) _ _ _ (V_Clos {}) _
   = trivial ()
 
-evalApp_safe (VRecord {}) _ _ _ (V_Clos {}) _
+evalApp_safe (VRecordEmp) _ _ _ (V_Clos {}) _
+  = trivial ()
+
+evalApp_safe (VRecordBind {}) _ _ _ (V_Clos {}) _
   = trivial ()
 
 
@@ -534,7 +517,9 @@ evalFst_safe (VBool {}) t1 _ (V_Pair {})
   = trivial ()
 evalFst_safe (VClos {}) t1 _ (V_Pair {})
   = trivial ()
-evalFst_safe (VRecord {}) t1 _ (V_Pair {})
+evalFst_safe (VRecordEmp) _ _ (V_Pair {})
+  = trivial ()
+evalFst_safe (VRecordBind {}) _ _ (V_Pair {})
   = trivial ()
 
 {-@ evalFst_res_safe
@@ -549,29 +534,48 @@ evalFst_res_safe _ t1 _ (R_Time {})
   = R_Time t1
 
 {-@ evalRecord_safe
-    :: g:TEnv -> s:VEnv -> er:ERecord -> tr:TRecord
-    -> Prop (ExprTyRecord g er tr)
-    -> Prop (StoTy g s)
-    -> Prop (ResTy (evalRecord s er) (TRecord tr))
+    :: l:Label -> val:Val -> vr:Val -> t:Type -> tr:TRecord
+    -> Prop (ValTy val t)
+    -> Prop (ValTy vr (TRecord tr))
+    -> Prop (ResTy (evalRecord l val vr) (TRecord (TRecordBind l t tr)))
   @-}
+evalRecord_safe :: Label -> Val -> Val -> Type -> TRecord -> ValTy -> ValTy -> ResTy
+evalRecord_safe _ _ (VPair {}) _ _ _ (V_RecordBind {})
+  = trivial ()
+evalRecord_safe _ _ (VInt {}) _ _ _ (V_RecordBind {})
+  = trivial ()
+evalRecord_safe _ _ (VBool {}) _ _ _ (V_RecordBind {})
+  = trivial ()
+evalRecord_safe _ _ (VClos {}) _ _ _ (V_RecordBind {})
+  = trivial ()
+evalRecord_safe _ _ (VPair {}) _ _ _ (V_RecordEmp {})
+  = trivial ()
+evalRecord_safe _ _ (VInt {}) _ _ _ (V_RecordEmp {})
+  = trivial ()
+evalRecord_safe _ _ (VBool {}) _ _ _ (V_RecordEmp {})
+  = trivial ()
+evalRecord_safe _ _ (VClos {}) _ _ _ (V_RecordEmp {})
+  = trivial ()
+evalRecord_safe l val vr t tr val_t vr_tr =
+  R_Res vrecord trecord vrecord_trecord 
+  where
+    vrecord = VRecordBind l val vr
+    trecord = TRecord (TRecordBind l t tr)
+    vrecord_trecord = V_RecordBind l val vr t tr val_t vr_tr
 
-evalRecord_safe :: TEnv -> VEnv -> ERecord -> TRecord -> ExprTyRecord -> StoTy -> ResTy
-evalRecord_safe g s (ERecordBind er_label e er) (TRecordBind tr_label t tr) (ER_Bind _ label _ _ _ _ e_t etr) gs = 
-  case evalRecord_safe g s er tr etr gs of
-    R_Res (VRecord vr) (TRecord tr) (V_Record _ _ vr_tr) -> 
-      case eval_safe g s e t e_t gs of
-        R_Res v t v_t -> 
-          let vr'    = VRecordBind er_label v vr
-              tr'    = TRecordBind tr_label t tr
-              vr_tr' = VR_Bind label v t vr tr v_t vr_tr
-           in R_Res (VRecord vr') (TRecord tr') (V_Record vr' tr' vr_tr')
-        R_Time _ -> R_Time t
-    R_Res (VInt {})  _ (V_Record {}) -> trivial ()
-    R_Res (VBool {}) _ (V_Record {}) -> trivial ()
-    R_Res (VClos {}) _ (V_Record {}) -> trivial ()
-    R_Res (VPair {}) _ (V_Record {}) -> trivial ()
-    R_Time _ -> R_Time t
-evalRecordSafe _ _ ERecordEmp TRecordEmp (ER_Emp _) _ = R_Res (VRecord VRecordEmp) (TRecord TRecordEmp) (V_Record VRecordEmp TRecordEmp VR_Emp)
+{-@ evalRecord_res_safe
+    :: l:Label -> r:Result -> rRcd:Result -> t:Type -> tr:TRecord
+    -> Prop (ResTy r t)
+    -> Prop (ResTy rRcd (TRecord tr))
+    -> Prop (ResTy (seq2 (evalRecord l) r rRcd) (TRecord (TRecordBind l t tr)))
+  @-}
+evalRecord_res_safe :: Label -> Result -> Result -> Type -> TRecord -> ResTy -> ResTy -> ResTy
+evalRecord_res_safe l (Result v) (Result vr) t tr (R_Res _ _ v_t) (R_Res _ _ vr_tr) =
+  evalRecord_safe l v vr t tr v_t vr_tr
+evalRecord_res_safe l _ _ t tr (R_Time {}) _ =
+  R_Time (TRecord (TRecordBind l t tr))
+evalRecord_res_safe l _ _ t tr _ (R_Time {}) =
+  R_Time (TRecord (TRecordBind l t tr))
 
 --------------------------------------------------------------------------------
 -- | THEOREM: "eval_safe" 
@@ -619,10 +623,13 @@ eval_safe g s (EFst e) _ (E_Fst _ _ t1 t2 e1_t1_t2) gs
   where
     r1_t1_t2 = eval_safe g s e (TPair t1 t2) e1_t1_t2 gs
 
-eval_safe g s (ERecord er) t (E_Record _ _ _ exprTyRecord) gs
-  = case t of
-      TRecord tr -> evalRecord_safe g s er tr exprTyRecord gs
-      _          -> trivial ()
+eval_safe _ _ ERecordEmp _ (E_RecordEmp {}) _
+  = R_Res VRecordEmp (TRecord (TRecordEmp)) V_RecordEmp
+
+eval_safe g s (ERecordBind l e er) tp (E_RecordBind _ _ _ _ _ _ e_t er_tr) gs
+  = case tp of
+      TRecord (TRecordBind _ t tr) -> evalRecord_res_safe l (eval s e) (eval s er) t tr (eval_safe g s e t e_t gs) (eval_safe g s er (TRecord tr) er_tr gs)
+      _ -> trivial ()
 
 --------------------------------------------------------------------------------
 -- | Boilerplate 
