@@ -10,7 +10,6 @@
 --   1. Add Expression-level lambdas and Expression-level type application.
 --   2. Add VClos equivalents for Term lambdas
 --     Reasoning: (We know  (Λα. α→α)[int]   has type int→int What does that expression evaluate to? Can we look at that expression and know it's still int→int? Λα. λx:α.x (Λα. λx:α.x) [int])
---   3. Add TVars to the variable store(s)
 --   4. Add TApp
 
 module STLC where 
@@ -26,6 +25,7 @@ data Type
   | TFun Type Type
   | TPair Type Type
   | TRecord TRecord
+  | TForall TVar Type
   deriving (Eq, Show) 
 
 data TRecord
@@ -50,12 +50,14 @@ data Expr
   | EFst Expr                -- ^ 'EFst e1'       is 'fst e1'
   | ERecordBind Label Expr Expr -- 'ERecordBind'  is record extension
   | ERecordEmp               -- ^ 'ERecordEmp'    is '{}'
+  | EForall TVar Expr        -- ^ 'EForall t e'   is '/\ t. e'
   deriving (Eq, Show) 
 
 data Val 
   = VBool Bool 
   | VInt  Int
   | VClos Var Var Expr VEnv
+  | VForallClos TVar Expr VEnv
   | VPair Val Val
   | VRecordBind Label Val Val
   | VRecordEmp
@@ -122,6 +124,7 @@ eval s (EPair e1 e2)  = seq2 evalPair (eval s e1) (eval s e2)
 eval s (EFst e)       = mapResult evalFst (eval s e)
 eval s (ERecordBind l e er)   = seq2 (evalRecord l) (eval s e) (eval s er)
 eval s ERecordEmp = Result VRecordEmp
+eval s (EForall tv e) = Result (VForallClos tv e s)
 
 {-@ reflect evalPair @-}
 evalPair :: Val -> Val -> Result
@@ -229,6 +232,10 @@ data ResTy where
                -> Prop (StoTy g s) 
                -> Prop (ExprTy (TBind x t1 (TBind f (TFun t1 t2) g)) e t2)
                -> Prop (ValTy (VClos f x e s) (TFun t1 t2)) 
+      | V_ForallClos :: g:TEnv -> s:VEnv -> x:TVar -> t:Type -> e:Expr
+                     -> Prop (StoTy g s)
+                     -> Prop (ExprTy (TTVarBind x g) e t)
+                     -> Prop (ValTy (VForallClos x e s) (TForall x t))
       | V_Pair :: v1:Val -> v2:Val -> t1:Type -> t2:Type 
                -> Prop (ValTy v1 t1) 
                -> Prop (ValTy v2 t2)
@@ -247,6 +254,7 @@ data ValTy where
   V_Bool   :: Bool -> ValTy 
   V_Int    :: Int  -> ValTy 
   V_Clos   :: TEnv -> VEnv -> Var -> Var -> Type -> Type -> Expr -> StoTy -> ExprTy  -> ValTy 
+  V_ForallClos :: TEnv -> VEnv -> TVar -> Type -> Expr -> StoTy -> ExprTy  -> ValTy 
   V_Pair   :: Val -> Val -> Type -> Type -> ValTy -> ValTy -> ValTy
   V_RecordBind :: Label -> Val -> Val -> Type -> TRecord -> ValTy -> ValTy -> ValTy
   V_RecordEmp :: ValTy
@@ -384,6 +392,9 @@ lookupTEnv x (TTVarBind _ env)  = lookupTEnv x env
                      -> Prop (ExprTy g er (TRecord tr))
                      -> Prop (ExprTy g (ERecordBind l e er) (TRecord (TRecordBind l t tr)))
       | E_RecordEmp :: g:TEnv -> Prop (ExprTy g ERecordEmp (TRecord TRecordEmp))
+      | E_Forall :: g:TEnv -> x:TVar -> e:Expr -> t:Type
+               -> Prop (ExprTy (TTVarBind x g) e t)
+               -> Prop (ExprTy g (EForall x e) (TForall x t))       
   @-}
 data ExprTyP where 
   ExprTy :: TEnv -> Expr -> Type -> ExprTyP  
@@ -399,6 +410,7 @@ data ExprTy where
   E_Fst    :: TEnv -> Expr -> Type -> Type -> ExprTy -> ExprTy
   E_RecordBind :: TEnv -> Label -> Expr -> Expr -> Type -> TRecord -> ExprTy -> ExprTy -> ExprTy
   E_RecordEmp :: TEnv -> ExprTy
+  E_Forall :: TEnv -> TVar -> Expr -> Type -> ExprTy -> ExprTy
 
 --------------------------------------------------------------------------------
 -- | Lemma 1: "evalOp_safe" 
@@ -495,6 +507,9 @@ evalApp_safe (VRecordEmp) _ _ _ (V_Clos {}) _
 evalApp_safe (VRecordBind {}) _ _ _ (V_Clos {}) _
   = trivial ()
 
+evalApp_safe (VForallClos {}) _ _ _ (V_Clos {}) _
+  = trivial ()
+
 
 {-@ evalApp_res_safe 
       :: r1:Result -> r2:Result -> t1:Type -> t2:Type
@@ -556,6 +571,8 @@ evalFst_safe (VRecordEmp) _ _ (V_Pair {})
   = trivial ()
 evalFst_safe (VRecordBind {}) _ _ (V_Pair {})
   = trivial ()
+evalFst_safe (VForallClos {}) _ _ (V_Pair {})
+  = trivial ()
 
 {-@ evalFst_res_safe
     :: r:Result -> t1:Type -> t2:Type
@@ -590,6 +607,8 @@ evalRecord_safe _ _ (VInt {}) _ _ _ (V_RecordEmp {})
 evalRecord_safe _ _ (VBool {}) _ _ _ (V_RecordEmp {})
   = trivial ()
 evalRecord_safe _ _ (VClos {}) _ _ _ (V_RecordEmp {})
+  = trivial ()
+evalRecord_safe _ _ (VForallClos {}) _ _ _ (V_RecordEmp {})
   = trivial ()
 evalRecord_safe l val vr t tr val_t vr_tr =
   R_Res vrecord trecord vrecord_trecord 
@@ -641,6 +660,12 @@ eval_safe g s (EVar x) t (E_Var {}) gs
 
 eval_safe g s (EFun f x t1 e) t (E_Fun _ _ _ _ _ t2 et2) gs 
   = R_Res (VClos f x e s) t (V_Clos g s f x t1 t2 e gs et2)
+
+eval_safe g s (EForall x e) tp@(TForall _ t) (E_Forall _ _ _ _ et) gs
+  = R_Res (VForallClos x e s) tp (V_ForallClos g s x t e gs et)
+
+eval_safe _ _ (EForall _ _) _ (E_Forall _ _ _ _ _) _
+  = trivial ()
       
 eval_safe g s (EApp e1 e2) t2 (E_App _ _ _ t1 _ e1_t1_t2 e2_t1) gs 
   = evalApp_res_safe (eval s e1) (eval s e2) t1 t2 r1_t1_t2 r2_t1 
