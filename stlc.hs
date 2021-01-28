@@ -6,6 +6,13 @@
 
 {-# LANGUAGE GADTs #-}
 
+-- TODO:
+--   1. Add Expression-level lambdas and Expression-level type application.
+--   2. Add VClos equivalents for Term lambdas
+--     Reasoning: (We know  (Λα. α→α)[int]   has type int→int What does that expression evaluate to? Can we look at that expression and know it's still int→int? Λα. λx:α.x (Λα. λx:α.x) [int])
+--   3. Add TVars to the variable store(s)
+--   4. Add TApp
+
 module STLC where 
 
 type Var   = String 
@@ -39,7 +46,7 @@ data Expr
   | EApp  Expr Expr          -- ^ 'EApp e1 e2'    is 'e1 e2' 
   | EPair Expr Expr          -- ^ 'EPair e1 e2'   is '(e1, e2)'
   | EFst Expr                -- ^ 'EFst e1'       is 'fst e1'
-  | ERecordBind Label Expr Expr
+  | ERecordBind Label Expr Expr -- 'ERecordBind'  is record extension
   | ERecordEmp               -- ^ 'ERecordEmp'    is '{}'
   deriving (Eq, Show) 
 
@@ -203,6 +210,10 @@ data ResTy where
       |- val : t     |- vr : (TRecord tr) 
     ---------------------------------------- [V_RecordBind]
       |- VRecordBind l val vr : TRecord (TRecordBind l t tr)
+
+      g |- s    g, tv |- v : t
+    ----------------------------- [V_Forall]  TODO: Change to a closure akin to V_Clos
+      |- VForall tv e : TForall tv t
     
  -}
 
@@ -247,6 +258,10 @@ data ValTy where
       |- v : t   g |- s 
    ------------------------[S_Bind]
    (x, t), g |- (x, v), s 
+
+      t1 = t2    g |- s
+   ------------------------[S_BindTVar
+   t1, g |- t2, s
 
  -}
 
@@ -318,6 +333,14 @@ lookupTEnv x (TBind y v env)  = if x == y then Just v else lookupTEnv x env
     G |- e : t   G |- er : TRecord tr
   --------------------------------------[E-RecordBind]
     G |- ERecordBind l e er : TRecord (TRecordBind l t tr)
+
+         G, tv |- e : t
+  ----------------------------- [E_Forall]
+    G |- EForall tv e : EForall tv t
+
+    G |- e : TForall tv t  G |- t'
+  ----------------------------- [E_TApp]
+    G |- ETApp e t' : t[tv -> t']
 
 -}
 
