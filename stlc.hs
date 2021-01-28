@@ -15,12 +15,14 @@
 
 module STLC where 
 
+type TVar  = String
 type Var   = String 
 type Label = String
 
 data Type 
   = TInt 
   | TBool 
+  | TVar
   | TFun Type Type
   | TPair Type Type
   | TRecord TRecord
@@ -67,11 +69,13 @@ data Result
 
 data VEnv  
   = VBind Var Val VEnv 
+  | VTVarBind TVar VEnv
   | VEmp 
   deriving (Eq, Show) 
 
 data TEnv  
   = TBind Var Type TEnv 
+  | TTVarBind TVar TEnv
   | TEmp 
   deriving (Eq, Show) 
 
@@ -100,8 +104,9 @@ seq2 f r1 r2 = case r1 of
 
 {-@ reflect lookupVEnv @-}
 lookupVEnv :: Var -> VEnv -> Maybe Val 
-lookupVEnv x VEmp             = Nothing 
-lookupVEnv x (VBind y v env)  = if x == y then Just v else lookupVEnv x env
+lookupVEnv x VEmp              = Nothing 
+lookupVEnv x (VBind y v env)   = if x == y then Just v else lookupVEnv x env
+lookupVEnv x (VTVarBind _ env) = lookupVEnv x env
 
 {-@ reflect eval @-}
 eval :: VEnv -> Expr -> Result 
@@ -259,9 +264,9 @@ data ValTy where
    ------------------------[S_Bind]
    (x, t), g |- (x, v), s 
 
-      t1 = t2    g |- s
-   ------------------------[S_BindTVar
-   t1, g |- t2, s
+      g |- s
+   ------------------------[S_BindTVar]
+   x, g |- x, s
 
  -}
 
@@ -271,6 +276,9 @@ data ValTy where
                -> Prop (ValTy val t) 
                -> Prop (StoTy g   s) 
                -> Prop (StoTy (TBind x t g) (VBind x val s)) 
+      | S_TVarBind :: x:TVar -> g:TEnv -> s:VEnv
+                   -> Prop (StoTy g s)
+                   -> Prop (StoTy (TTVarBind x g) (VTVarBind x s))
   @-}
 
 data StoTyP where 
@@ -279,6 +287,7 @@ data StoTyP where
 data StoTy where 
   S_Emp  :: StoTy 
   S_Bind :: Var -> Type -> Val -> TEnv -> VEnv -> ValTy -> StoTy -> StoTy 
+  S_TVarBind :: TVar -> TEnv -> VEnv -> StoTy -> StoTy
 
 --------------------------------------------------------------------------------
 -- | Typing Expressions 
@@ -300,6 +309,7 @@ opOut And = TBool
 lookupTEnv :: Var -> TEnv -> Maybe Type 
 lookupTEnv x TEmp             = Nothing 
 lookupTEnv x (TBind y v env)  = if x == y then Just v else lookupTEnv x env
+lookupTEnv x (TTVarBind _ env)  = lookupTEnv x env
 
 
 {- 
@@ -447,6 +457,8 @@ lookup_safe g s x t (S_Bind y yt yv g' s' yvt gs')
   = (yv, ((), yvt)) 
   | otherwise 
   = lookup_safe g' s' x t gs' 
+lookup_safe _ _ x t (S_TVarBind _ g' s' gs')
+  = lookup_safe g' s' x t gs'
 
 --------------------------------------------------------------------------------
 -- | Lemma 3: "app_safe" 
