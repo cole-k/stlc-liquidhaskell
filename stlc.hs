@@ -6,11 +6,15 @@
 
 {-# LANGUAGE GADTs #-}
 
--- TODO:
---   1. Add Expression-level lambdas and Expression-level type application.
---   2. Add VClos equivalents for Term lambdas
---     Reasoning: (We know  (Λα. α→α)[int]   has type int→int What does that expression evaluate to? Can we look at that expression and know it's still int→int? Λα. λx:α.x (Λα. λx:α.x) [int])
---   4. Add TApp
+-- TODO
+-- Add type information to the store when evaluation happens?
+-- id = EForall Y. \x: Y -> x
+-- (EForall X. (id @ X)) @ Int
+--              ^- V_Clos g s f x (TVar "Y") (TVar "Y") e
+-- ETApp g (EForall X. (ETApp id X)) Int
+
+-- ExprTy g (ETApp id X) (X -> X)[X |-> Int]
+-- ExprTy g (ETapp id X) (Int -> Int)
 
 module STLC where 
 
@@ -21,7 +25,7 @@ type Label = String
 data Type 
   = TInt 
   | TBool 
-  | TVar
+  | TVar TVar
   | TFun Type Type
   | TPair Type Type
   | TRecord TRecord
@@ -50,7 +54,8 @@ data Expr
   | EFst Expr                -- ^ 'EFst e1'       is 'fst e1'
   | ERecordBind Label Expr Expr -- 'ERecordBind'  is record extension
   | ERecordEmp               -- ^ 'ERecordEmp'    is '{}'
-  | EForall TVar Expr        -- ^ 'EForall t e'   is '/\ t. e'
+  | EForall TVar Expr        -- ^ 'EForall tv e'  is '/\ t. e'
+  | ETApp Expr Type          -- ^ 'ETApp e t'     is type application
   deriving (Eq, Show) 
 
 data Val 
@@ -71,7 +76,7 @@ data Result
 
 data VEnv  
   = VBind Var Val VEnv 
-  | VTVarBind TVar VEnv
+  -- | VTVarBind TVar Type VEnv
   | VEmp 
   deriving (Eq, Show) 
 
@@ -100,6 +105,26 @@ seq2 f r1 r2 = case r1 of
                                 Timeout   -> Timeout 
                                 Result v2 -> f v1 v2 
 
+{-@ reflect substTVar @-}
+substTVar :: TVar -> Type -> Type -> Type
+substTVar x tSub t@(TVar x')
+  | x == x'   = tSub
+  | otherwise = t
+substTVar x tSub (TFun t1 t2) = TFun (substTVar x tSub t1) (substTVar x tSub t2)
+substTVar x tSub (TPair t1 t2) = TPair (substTVar x tSub t1) (substTVar x tSub t2)
+substTVar x tSub (TRecord tr) = TRecord (substTVarRecord x tSub tr)
+substTVar x tSub t@(TForall x' tInner)
+  -- The forall shadows x
+  | x == x'   = t
+  | otherwise = TForall x' (substTVar x tSub tInner)
+substTVar _ _ TInt  = TInt
+substTVar _ _ TBool = TBool
+
+{-@ reflect substTVarRecord @-}
+substTVarRecord :: TVar -> Type -> TRecord -> TRecord
+substTVarRecord x tSub (TRecordBind l t tr) = TRecordBind l (substTVar x tSub t) (substTVarRecord x tSub tr)
+substTVarRecord _ _ TRecordEmp = TRecordEmp
+
 --------------------------------------------------------------------------------
 -- | Evaluator 
 --------------------------------------------------------------------------------
@@ -108,7 +133,7 @@ seq2 f r1 r2 = case r1 of
 lookupVEnv :: Var -> VEnv -> Maybe Val 
 lookupVEnv x VEmp              = Nothing 
 lookupVEnv x (VBind y v env)   = if x == y then Just v else lookupVEnv x env
-lookupVEnv x (VTVarBind _ env) = lookupVEnv x env
+-- lookupVEnv x (VTVarBind _ _ env) = lookupVEnv x env
 
 {-@ reflect eval @-}
 eval :: VEnv -> Expr -> Result 
@@ -125,6 +150,7 @@ eval s (EFst e)       = mapResult evalFst (eval s e)
 eval s (ERecordBind l e er)   = seq2 (evalRecord l) (eval s e) (eval s er)
 eval s ERecordEmp = Result VRecordEmp
 eval s (EForall tv e) = Result (VForallClos tv e s)
+eval s (ETApp e t) = mapResult (evalTApp t) (eval s e)
 
 {-@ reflect evalPair @-}
 evalPair :: Val -> Val -> Result
@@ -145,6 +171,13 @@ evalRecord :: Label -> Val -> Val -> Result
 evalRecord l v vr@(VRecordBind _ _ _) = Result (VRecordBind l v vr)
 evalRecord l v vr@(VRecordEmp) = Result (VRecordBind l v vr)
 evalRecord _ v _ = Stuck
+
+-- flipped because of SMTLib issues with anonymous functions
+{-@ reflect evalTApp @-}
+evalTApp :: Type -> Val -> Result
+-- substitute on terms here
+evalTApp _ (VForallClos x e s) = eval s e
+evalTApp _ _ = Stuck
 
 {-@ reflect evalOp @-}
 evalOp :: Op -> Val -> Val -> Result 
@@ -274,7 +307,7 @@ data ValTy where
 
       g |- s
    ------------------------[S_BindTVar]
-   x, g |- x, s
+   x, g |- s
 
  -}
 
@@ -286,7 +319,7 @@ data ValTy where
                -> Prop (StoTy (TBind x t g) (VBind x val s)) 
       | S_TVarBind :: x:TVar -> g:TEnv -> s:VEnv
                    -> Prop (StoTy g s)
-                   -> Prop (StoTy (TTVarBind x g) (VTVarBind x s))
+                   -> Prop (StoTy (TTVarBind x g) s)
   @-}
 
 data StoTyP where 
@@ -354,7 +387,7 @@ lookupTEnv x (TTVarBind _ env)  = lookupTEnv x env
 
          G, tv |- e : t
   ----------------------------- [E_Forall]
-    G |- EForall tv e : EForall tv t
+    G |- EForall tv e : TForall tv t
 
     G |- e : TForall tv t  G |- t'
   ----------------------------- [E_TApp]
@@ -363,7 +396,7 @@ lookupTEnv x (TTVarBind _ env)  = lookupTEnv x env
 -}
 
 {-@ data ExprTy where 
-        E_Bool :: g:TEnv -> b:Bool 
+       E_Bool  :: g:TEnv -> b:Bool 
                -> Prop (ExprTy g (EBool b) TBool)
       | E_Int  :: g:TEnv -> i:Int  
                -> Prop (ExprTy g (EInt i)  TInt)
@@ -395,7 +428,11 @@ lookupTEnv x (TTVarBind _ env)  = lookupTEnv x env
       | E_Forall :: g:TEnv -> x:TVar -> e:Expr -> t:Type
                -> Prop (ExprTy (TTVarBind x g) e t)
                -> Prop (ExprTy g (EForall x e) (TForall x t))       
+      | E_TApp :: g:TEnv -> e:Expr -> x:TVar -> t_x:Type -> t_fa:Type
+               -> Prop (ExprTy g e (TForall x t_fa))
+               -> Prop (ExprTy g (ETApp e t_x) (substTVar x t_x t_fa))
   @-}
+
 data ExprTyP where 
   ExprTy :: TEnv -> Expr -> Type -> ExprTyP  
 
@@ -411,6 +448,7 @@ data ExprTy where
   E_RecordBind :: TEnv -> Label -> Expr -> Expr -> Type -> TRecord -> ExprTy -> ExprTy -> ExprTy
   E_RecordEmp :: TEnv -> ExprTy
   E_Forall :: TEnv -> TVar -> Expr -> Type -> ExprTy -> ExprTy
+  E_TApp :: TEnv -> Expr -> TVar -> Type -> Type -> ExprTy -> ExprTy
 
 --------------------------------------------------------------------------------
 -- | Lemma 1: "evalOp_safe" 
@@ -475,6 +513,23 @@ lookup_safe _ _ x t (S_TVarBind _ g' s' gs')
 --------------------------------------------------------------------------------
 -- | Lemma 3: "app_safe" 
 --------------------------------------------------------------------------------
+
+-- {-@ evalTApp_safe
+--       :: v:Val -> x:TVar -> t_fa:Type -> t_x:Type
+--       -> Prop (ValTy v (TForall x t_fa))
+--       -> Prop (ResTy (evalTApp v t_x) (substTVar x t_x t_fa))
+--   @-}
+
+-- We need to substitute on the inner term (both here and in evalTApp)
+-- in order to guarantee that the returned type is going to match
+-- (e.g. the inner type might be Forall x. x -> x, but if the outer
+--  type is applied to x=Int, then this needs to be substituted in order
+--  for the resulting type to match Int -> Int)
+-- evalTApp_safe v@(VForallClos x e s) 
+--   = eval_safe g' s' e t' (ExprTy g' e t')
+--   where
+--     t' = (substTVar x t_x t_fa)
+
 {-@ evalApp_safe 
       :: v1:Val -> v2:Val -> t1:Type -> t2:Type
       -> Prop (ValTy v1 (TFun t1 t2)) 
@@ -634,6 +689,7 @@ evalRecord_res_safe l _ _ t tr _ (R_Time {}) =
 --------------------------------------------------------------------------------
 -- | THEOREM: "eval_safe" 
 --------------------------------------------------------------------------------
+
 {-@ eval_safe :: g:TEnv -> s:VEnv -> e:Expr -> t:Type 
               -> Prop (ExprTy g e t) 
               -> Prop (StoTy  g s) 
