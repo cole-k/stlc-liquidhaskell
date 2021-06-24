@@ -7,6 +7,13 @@
 {-# LANGUAGE GADTs #-}
 
 -- TODO
+-- * write up informally why we are OK with ignoring the cases of shadowing
+-- * general clean up of comments and stuff
+-- * look back at the general state of affairs and what we might want to do
+--   going forward
+-- * add tapp examples (hopefully they run)
+
+-- TODO
 -- Add type information to the store when evaluation happens?
 -- id = EForall Y. \x: Y -> x
 -- (EForall X. (id @ X)) @ Int
@@ -1154,7 +1161,7 @@ eval_safe g s (ETApp e t) tp (E_TApp _ _ x t_x t_fa e_t_fa) gs
 -- Tests
 test_bools = [ eval_safe g s e t e_t gs
                -- , eval_safe g s e t e_t_bad gs -- should fail
-               ]
+             ]
   where
     g = TEmp
     s = VEmp
@@ -1164,8 +1171,7 @@ test_bools = [ eval_safe g s e t e_t gs
     e_t_bad = E_Bool g True
     gs = S_Emp
 
-test_foralls = [ eval_safe g s e t e_t gs
-               ]
+test_forall_1 = eval_safe g s e t e_t gs
   where
     g = TEmp
     s = VEmp
@@ -1178,9 +1184,28 @@ test_foralls = [ eval_safe g s e t e_t gs
     e_t = E_Forall g x eInner tInner eInner_tInner
     gs = S_Emp
 
+test_forall_2 = eval_safe g s e t e_t gs
+  where
+    g = TEmp
+    s = VEmp
+    t_x = "a" -- both could be "x" but this makes it easier to read
+    v_x = "x"
+    f = "f"
+    eVar = EVar v_x
+    tVar = TVar t_x
+    eVar_tVar = E_Var (TBind v_x tVar (TBind f (TFun tVar tVar) g')) v_x tVar 
+    eInner = EFun f v_x tVar eVar
+    tInner = TFun tVar tVar
+    g' = TTVarBind t_x g
+    eInner_tInner = E_Fun g' f v_x tVar eVar tVar eVar_tVar
+    e = EForall t_x eInner
+    t = TForall t_x tInner
+    e_t = E_Forall g t_x eInner tInner eInner_tInner
+    gs = S_Emp
+
 main :: IO ()
 main = do
-  mapM_ (putStrLn . printer) test_foralls
+  mapM_ (putStrLn . printer) [test_forall_1, test_forall_2]
   where
     printer resTy = case resTy of
       R_Res val ty valTy -> "val: " ++ show val ++ " type: " ++ show ty
