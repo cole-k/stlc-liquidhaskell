@@ -499,6 +499,19 @@ lookupTEnv x (TTVarBind _ env)  = lookupTEnv x env
                -> Prop (ExprTy g (ETApp e t_x) (substTVar x t_x t_fa))
   @-}
 
+--      | E_Forall :: g:TEnv -> x:TVar -> e:Expr -> t:Type
+--               -> {Prop (ExprTy (TTVarBind x g) e t) | x `notIn` g}
+--               -> Prop (ExprTy g (EForall x e) (TForall x t))       
+--
+--      |
+--      v
+--
+--      | E_Forall :: g:TEnv -> x:TVar -> e:Expr -> t:Type
+--               -> Prop (ExprTy (insertAndRenameIfNecessary x g) (renameIfNecessary g e) t)
+--               -> Prop (ExprTy g (EForall x e) (TForall x t))       
+--
+--               look at de bruijn indicies if this is too much
+
 data ExprTyP where 
   ExprTy :: TEnv -> Expr -> Type -> ExprTyP  
 
@@ -612,15 +625,116 @@ substTVarContext (TTVarBind _ g) s (S_TVarBind x_tvar _ _ gs) x t_x =
 fixSubstPair :: TEnv -> Expr -> Type -> Type -> TVar -> Type -> ExprTy -> ExprTy
 fixSubstPair _ _ _ _ _ _ e_t1_t2 = e_t1_t2
 
-{-@ fixSubstTForall
-      :: g:TEnv -> e:Expr -> x_fa:TVar -> t_fa:Type -> x:TVar -> t_x:Type
-      -> Prop (ExprTy g e (substTVar x t_x (TForall x_fa t_fa)))
-      -> Prop (ExprTy g e (TForall x_fa (substTVar x t_x t_fa)))
+{-@ substTForallVarNotEqP
+      :: x_fa:TVar -> t_fa:Type -> x_subst:TVar -> t_subst:Type
+      -> p:{x_fa != x_subst}
+      -> {substTVar x_subst t_subst (TForall x_fa t_fa) == TForall x_fa (substTVar x_subst t_subst t_fa)}
   @-}
-fixSubstTForall :: TEnv -> Expr -> TVar -> Type -> TVar -> Type -> ExprTy -> ExprTy
-fixSubstTForall _ _ x_fa _ x _ e_t_fa
-  | x_fa == x = e_t_fa
-  | otherwise = e_t_fa
+substTForallVarNotEqP :: TVar -> Type -> TVar -> Type -> Proof -> Proof
+substTForallVarNotEqP x_fa t_fa x_subst t_subst varNotEqP
+  =   substTVar x_subst t_subst (TForall x_fa t_fa)
+  ==. TForall x_fa (substTVar x_subst t_subst t_fa) ? varNotEqP
+  *** QED
+
+{-@ substTForallVarEqP
+      :: x_fa:TVar -> t_fa:Type -> x_subst:TVar -> t_subst:Type
+      -> p:{x_fa == x_subst}
+      -> {substTVar x_subst t_subst (TForall x_fa t_fa) == TForall x_fa t_fa}
+  @-}
+substTForallVarEqP :: TVar -> Type -> TVar -> Type -> Proof -> Proof
+substTForallVarEqP x_fa t_fa x_subst t_subst varEqP
+  =   substTVar x_subst t_subst (TForall x_fa t_fa)
+  ==. TForall x_fa t_fa ? varEqP
+  *** QED
+
+{-@ substEForallVarNotEqP
+      :: x_fa:TVar -> e_fa:Expr -> x_subst:TVar -> t_subst:Type
+      -> p:{x_fa != x_subst}
+      -> {substTVarExpr x_subst t_subst (EForall x_fa e_fa) == EForall x_fa (substTVarExpr x_subst t_subst e_fa)}
+  @-}
+substEForallVarNotEqP :: TVar -> Expr -> TVar -> Type -> Proof -> Proof
+substEForallVarNotEqP x_fa e_fa x_subst t_subst varNotEqP
+  =   substTVarExpr x_subst t_subst (EForall x_fa e_fa)
+  ==. EForall x_fa (substTVarExpr x_subst t_subst e_fa) ? varNotEqP
+  *** QED
+
+{-@ substEForallVarEqP
+      :: x_fa:TVar -> e_fa:Expr -> x_subst:TVar -> t_subst:Type
+      -> p:{x_fa == x_subst}
+      -> {substTVarExpr x_subst t_subst (EForall x_fa e_fa) == EForall x_fa e_fa}
+  @-}
+substEForallVarEqP :: TVar -> Expr -> TVar -> Type -> Proof -> Proof
+substEForallVarEqP x_fa e_fa x_subst t_subst varEqP
+  =   substTVarExpr x_subst t_subst (EForall x_fa e_fa)
+  ==. EForall x_fa e_fa ? varEqP
+  *** QED
+
+{-@ fixSubstTForallEq
+      :: t:Type -> x_subst:TVar -> t_subst:Type
+      -> p:{t == substTVar x_subst t_subst t}
+      -> {t':Type | t' == substTVar x_subst t_subst t}
+  @-}
+fixSubstTForallEq :: Type -> TVar -> Type -> Proof -> Type
+fixSubstTForallEq t _ _ tEq
+  = t ? tEq
+
+{-@ fixSubstEForallEq
+      :: e:Expr -> x_subst:TVar -> t_subst:Type
+      -> p:{e == substTVarExpr x_subst t_subst e}
+      -> {e':Expr | e' == substTVarExpr x_subst t_subst e}
+  @-}
+fixSubstEForallEq :: Expr -> TVar -> Type -> Proof -> Expr
+fixSubstEForallEq e _ _ eEq
+  = e ? eEq
+
+{-@ fixSubstTForallNotEq
+      :: t1:Type -> t2:Type
+      -> p:{t1 == t2}
+      -> {t':Type | t' == t1 && t' == t2}
+  @-}
+fixSubstTForallNotEq :: Type -> Type -> Proof -> Type
+fixSubstTForallNotEq t1 _ p
+  = t1 ? p
+
+{-@ substETAppVarNotEqP
+      :: t_ta:Type -> e_ta:Expr -> x_subst:TVar -> t_subst:Type
+      -> {ETApp (substTVarExpr x_subst t_subst e_ta) (substTVar x_subst t_subst t_ta) == substTVarExpr x_subst t_subst (ETApp e_ta t_ta)}
+  @-}
+substETAppVarNotEqP :: Type -> Expr -> TVar -> Type -> Proof
+substETAppVarNotEqP t_ta e_ta x_subst t_subst
+  =   ETApp (substTVarExpr x_subst t_subst e_ta) (substTVar x_subst t_subst t_ta)
+  ==. substTVarExpr x_subst t_subst (ETApp e_ta t_ta)
+  *** QED
+
+{-@ switchSubstTVar
+      :: tv1:TVar -> t1:Type -> tv2:TVar -> t2:Type -> tInner:Type
+      -> p:{tv1 != tv2}
+      -> {substTVar tv2 t2 (substTVar tv1 t1 tInner) == substTVar tv1 (substTVar tv2 t2 t1) (substTVar tv2 t2 tInner) }
+  @-}
+switchSubstTVar :: TVar -> Type -> TVar -> Type -> Type -> Proof -> Proof
+switchSubstTVar tv1 t1 tv2 t2 tInner t1t2NEq
+  = undefined
+  -- =   substTVar tv2 t2 (substTVar tv1 t1 tInner)
+  -- ==. substTVar tv2 t2 (substTVar tv1 (substTVar tv2 t2 t1) tInner)
+  -- ==. substTVar tv1 (substTVar tv2 t2 t1) (substTVar tv2 t2 tInner) ? t1t2NEq
+  -- *** QED
+
+-- {-@ fixSubstEForallNotEq
+--       :: e1:Expr -> e2:Expr
+--       -> p:{t1 == t2}
+--       -> {t':Type | t' == t1 && t' == t2}
+--   @-}
+-- fixSubstEForallNotEq
+
+-- {-@ fixSubstTForall
+--       :: g:TEnv -> e:Expr -> x_fa:TVar -> t_fa:Type -> x:TVar -> t_x:Type
+--       -> Prop (ExprTy g e (substTVar x t_x (TForall x_fa t_fa)))
+--       -> Prop (ExprTy g e (TForall x_fa (substTVar x t_x t_fa)))
+--   @-}
+-- fixSubstTForall :: TEnv -> Expr -> TVar -> Type -> TVar -> Type -> ExprTy -> ExprTy
+-- fixSubstTForall _ _ x_fa _ x _ e_t_fa
+--   | x_fa == x = e_t_fa
+--   | otherwise = e_t_fa
 
 -- {-@ fixSubstVar
 --       :: x:TVar -> t_x:Type -> x_var:Var -> g:TEnv
@@ -644,13 +758,25 @@ fixSubstVar _ t _ proof = t ? proof
 -- Change Prop (ExprTy (TTVarBind x g) e t)
 -- to reflect that x can be anywhere in the context?
 
+-- g = g2, TVar x, g1
+-- g' = substTVar g2, g1
+--
+-- E_Var g x_var t -> lookup x_var g == t
+-- E_Var g' x_var t -> lookup x_var g' == substTVar t
+--
+-- Term: Forall a. \x: a -> ((Forall a. x) @ Int)
+-- Type (morally): forall a. (a -> a)
+
 {-@ substTVarExprTy
      :: g:TEnv -> s:VEnv -> e:Expr -> t:Type -> x:TVar -> t_x:Type
      -> g' : {y:TEnv | y=mapTEnv (substTVar x t_x) g}
-     -> Prop (ExprTy (TTVarBind x g) e t)
-     -> Prop (StoTy g s)
+     -> Prop (ExprTy g e t)
      -> Prop (ExprTy g' (substTVarExpr x t_x e) (substTVar x t_x t))
   @-}
+
+-- need to change the name of the bound forall variable if substitution clashes
+-- with it. And also modify the type and expression with the new name. And prove
+-- that the resulting thing is equivalent.
 
 -- This function needs to return a new g' with substituted values,
 -- s (unchanged?), a new (StoTy g' s) modified from the original
@@ -660,21 +786,17 @@ fixSubstVar _ t _ proof = t ? proof
 
 -- TODO: get rid of s/gs? It is problematic for E_Fun
 
-substTVarExprTy :: TEnv -> VEnv -> Expr -> Type -> TVar -> Type -> TEnv -> ExprTy -> StoTy -> ExprTy
-substTVarExprTy g s _ _ x t_x g' e_t gs = case e_t of
+substTVarExprTy :: TEnv -> VEnv -> Expr -> Type -> TVar -> Type -> TEnv -> ExprTy -> ExprTy
+substTVarExprTy g s _ _ x t_x g' e_t = case e_t of
   E_Bool _ b -> E_Bool g' b
   E_Int _ i  -> E_Int g' i
   E_Bin _ o e1 e2 e1_tIn e2_tIn ->
     let tIn = opIn o
-        e1_tIn' = substTVarExprTy g s e1 tIn x t_x g' e1_tIn gs
-        e2_tIn' = substTVarExprTy g s e2 tIn x t_x g' e2_tIn gs
+        e1_tIn' = substTVarExprTy g s e1 tIn x t_x g' e1_tIn
+        e2_tIn' = substTVarExprTy g s e2 tIn x t_x g' e2_tIn
      -- need to somehow convince liquid haskell that substTVar x t_x (opIn o) = opIn o
      in E_Bin g' o (substTVarExpr x t_x e1) (substTVarExpr x t_x e2) e1_tIn' e2_tIn'
   E_Var _ x_var t -> 
-    -- lookup x_var (mapTEnv f g) == f <$> (lookup x_var g)
-    -- { Type | lookup x_var (mapTEnv f g) == Just t }
-    --       == f (lookup x_var g)
-    --       == f t
     let t' = fixSubstVar x_var (substTVar x t_x t) g' (mapTEnvPreservesLookup x_var g t (substTVar x t_x))
      in E_Var g' x_var t'
   E_Fun _ f xArg t1 eInner t2 e_t2 ->
@@ -683,30 +805,30 @@ substTVarExprTy g s _ _ x t_x g' e_t gs = case e_t of
         eInner' = substTVarExpr x t_x eInner
         g_args = (TBind xArg t1 (TBind f (TFun t1 t2) g))
         -- TODO: pass the right arguments, substitute on t1 and t2?
-        (g_args', gs_args') = substTVarContext g_args undefined undefined x t_x
-        e_t2' = substTVarExprTy g_args' undefined eInner t2 x t_x g' e_t2 gs_args'
+        (g_args', _) = substTVarContext g_args undefined undefined x t_x
+        e_t2' = substTVarExprTy g_args' undefined eInner t2 x t_x g' e_t2
      in E_Fun g' f xArg t1' eInner' t2' e_t2'
   E_App _ e1 e2 t1 t2 e1_t1_t2 e2_t1 ->
     let t1' = substTVar x t_x t1
         t2' = substTVar x t_x t2
         e1' = substTVarExpr x t_x e1
         e2' = substTVarExpr x t_x e2
-        e1_t1_t2' = substTVarExprTy g s e1 (TFun t1 t2) x t_x g' e1_t1_t2 gs
-        e2_t1' = substTVarExprTy g s e2 t1 x t_x g' e2_t1 gs
+        e1_t1_t2' = substTVarExprTy g s e1 (TFun t1 t2) x t_x g' e1_t1_t2
+        e2_t1' = substTVarExprTy g s e2 t1 x t_x g' e2_t1
      in E_App g' e1' e2' t1' t2' e1_t1_t2' e2_t1'
   E_Pair _ e1 e2 t1 t2 e1_t1 e2_t2 ->
     let t1' = substTVar x t_x t1
         t2' = substTVar x t_x t2
         e1' = substTVarExpr x t_x e1
         e2' = substTVarExpr x t_x e2
-        e1_t1' = substTVarExprTy g s e1 t1 x t_x g' e1_t1 gs
-        e2_t2' = substTVarExprTy g s e2 t2 x t_x g' e2_t2 gs
+        e1_t1' = substTVarExprTy g s e1 t1 x t_x g' e1_t1
+        e2_t2' = substTVarExprTy g s e2 t2 x t_x g' e2_t2
      in E_Pair g' e1' e2' t1' t2' e1_t1' e2_t2'
   E_Fst _ e t1 t2 e_t1_t2 ->
     let t1' = substTVar x t_x t1
         t2' = substTVar x t_x t2
         e'  = substTVarExpr x t_x e
-        e_t1_t2' = substTVarExprTy g s e (TPair t1 t2) x t_x g' e_t1_t2 gs
+        e_t1_t2' = substTVarExprTy g s e (TPair t1 t2) x t_x g' e_t1_t2
         fixed_e_t1_t2' = fixSubstPair g' e' t1 t2 x t_x e_t1_t2'
      in E_Fst g' e' t1' t2' fixed_e_t1_t2'
   E_RecordBind _ l e er t tr e_t er_tr ->
@@ -714,28 +836,45 @@ substTVarExprTy g s _ _ x t_x g' e_t gs = case e_t of
         tr' = substTVarRecord x t_x tr
         e'  = substTVarExpr x t_x e
         er' = substTVarExpr x t_x er
-        e_t' = substTVarExprTy g s e t x t_x g' e_t gs
-        er_tr' = substTVarExprTy g s er (TRecord tr) x t_x g' er_tr gs
+        e_t' = substTVarExprTy g s e t x t_x g' e_t
+        er_tr' = substTVarExprTy g s er (TRecord tr) x t_x g' er_tr
      in E_RecordBind g' l e' er' t' tr' e_t' er_tr'
   E_RecordEmp _ -> E_RecordEmp g'
-  -- E_Forall _ x' eInner t eInner_t
-  --   -- x' shadows x, so do no substitution.
-  --   -- TODO t_x cannot reference x'
-  --   | x == x'   -> e_t
-  --   | otherwise ->
-  --     let t' = substTVar x t_x t
-  --         eInner' = substTVarExpr x t_x eInner
-  --         (_,(_,eInner_t')) = substTVarExprTy g s eInner t x t_x eInner_t gs
-  --      in E_Forall g' x' eInner' t' eInner_t'
+  E_Forall _ x' eInner t eInner_t
+    -- x' shadows x, so do no substitution.
+    -- TODO t_x cannot reference x'
+    | x == x'   -> undefined
+    --   let eInnerFixed = fixSubstEForallEq eInner x t_x (substEForallVarEqP x' eInner x t_x ())
+    --       tFixed = fixSubstTForallEq t x t_x (substTForallVarEqP x' t x t_x ())
+    --    in E_Forall g x' eInnerFixed tFixed eInner_t
+
+    -- [EForall alpha. (EForall alpha. (EFun var (alpha -> alpha) eFunInner))] @t
+
+
+    -- EForall alpha. (EFun var (alpha -> alpha) eFunInner)
+    -- g = (VarBind var (TFun (TVar alpha) (TVar alpha)) (TVarBind alpha TEmp))
+    -- substTVar alpha t
+    | otherwise -> 
+      let t' = substTVar x t_x t
+          eInner' = substTVarExpr x t_x eInner
+          eInner_t' = substTVarExprTy (TTVarBind x' g) s eInner t x t_x (TTVarBind x' g') eInner_t
+       in E_Forall g' x' eInner' t' eInner_t' 
+        ? substTForallVarNotEqP x' t x t_x ()
+        ? substEForallVarNotEqP x' eInner x t_x ()
   -- We want to substitute on t_x' always (it can't shadow this variable). We might not substitute inside
   -- of the forall, though, but that's handled in the recursive case.
-  -- E_TApp _ e x' t_x' t_fa e_t_forall ->
-  --   let t_x'' = substTVar x t_x t_x'
-  --       t_fa' = substTVar x t_x t_fa
-  --       e' = substTVarExpr x t_x e
-  --       (g_subst,(gs_subst,e_t_fa')) = substTVarExprTy g s e (TForall x' t_fa) x t_x e_t_forall gs
-  --       fixed_e_t_fa' = fixSubstTForall g_subst e' x' t_fa x t_x e_t_fa'
-  --    in (g_subst, (gs_subst, E_TApp g_subst e' x' t_x'' t_fa' fixed_e_t_fa'))
+  E_TApp _ e x' t_x' t_fa e_t_forall
+    | x == x' -> undefined
+    | otherwise ->
+      let t_x'' = substTVar x t_x t_x'
+          t_fa' = substTVar x t_x t_fa
+          e' = substTVarExpr x t_x e
+          t_forall = (TForall x' t_fa)
+          e_t_fa' = substTVarExprTy g s e t_forall x t_x g' e_t_forall
+            ? substTForallVarNotEqP x' t_forall x t_x ()
+          fixed_e' = e' ? substEForallVarNotEqP x' e x t_x ()
+       in E_TApp g' fixed_e' x' t_x'' t_fa' e_t_fa'
+          ? switchSubstTVar x' t_x' x t_x t_fa ()
 
 {-@ evalTApp_safe
       :: vv:Val -> x:TVar -> t_fa:Type -> t_x:Type
@@ -758,8 +897,9 @@ evalTApp_safe v@(VForallClos _ _e _s) x t_fa t_x (V_ForallClos g s _x _t e gs e_
   where
     e' = substTVarExpr x t_x e
     t' = substTVar x t_x t_fa
-    (g', gs') = substTVarContext g s gs x t_x
-    e_t' = substTVarExprTy g s e t_fa x t_x g' e_t gs
+    g_x = TTVarBind x g
+    (g', gs') = substTVarContext g_x s undefined x t_x
+    e_t' = substTVarExprTy g_x s e t_fa x t_x g' e_t
 
 evalTApp_safe (VInt {}) _ _ _ (V_ForallClos {}) 
   = trivial () 
@@ -1009,6 +1149,43 @@ eval_safe g s (ERecordBind l e er) tp (E_RecordBind _ _ _ _ _ _ e_t er_tr) gs
 
 eval_safe g s (ETApp e t) tp (E_TApp _ _ x t_x t_fa e_t_fa) gs
   = evalTApp_res_safe (eval s e) x t_fa t_x (eval_safe g s e (TForall x t_fa) e_t_fa gs)
+
+
+-- Tests
+test_bools = [ eval_safe g s e t e_t gs
+               -- , eval_safe g s e t e_t_bad gs -- should fail
+               ]
+  where
+    g = TEmp
+    s = VEmp
+    e = EBool False
+    t = TBool
+    e_t = E_Bool g False
+    e_t_bad = E_Bool g True
+    gs = S_Emp
+
+test_foralls = [ eval_safe g s e t e_t gs
+               ]
+  where
+    g = TEmp
+    s = VEmp
+    x = "x"
+    eInner = EBool False
+    tInner = TBool
+    eInner_tInner = E_Bool (TTVarBind x g) False
+    e = EForall x eInner
+    t = TForall x tInner
+    e_t = E_Forall g x eInner tInner eInner_tInner
+    gs = S_Emp
+
+main :: IO ()
+main = do
+  mapM_ (putStrLn . printer) test_foralls
+  where
+    printer resTy = case resTy of
+      R_Res val ty valTy -> "val: " ++ show val ++ " type: " ++ show ty
+      R_Time ty -> "timeout, type: " ++ show ty
+
 
 --------------------------------------------------------------------------------
 -- | Boilerplate 
