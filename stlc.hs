@@ -23,14 +23,25 @@
 -- ExprTy g (ETApp id X) (X -> X)[X |-> Int]
 -- ExprTy g (ETapp id X) (Int -> Int)
 --
--- for next week:
--- * figure out how to deal with non-unique type bindings in substitution
--- (cases where x = y) -- for now, assume unique type bindings
--- * continue formalizing the type substitution lemma (try verifying the
--- program with the body of the lemma set to undefined to see if it type
--- checks).
--- * see where additional judgements need to be added like type
--- well-formedness checks.
+
+
+-- Caveats
+-- * All type variables used must be unique, e.g. Forall x. (Forall x. x) is
+-- forbidden and so is TApp (EForall x. x) (Forall x. x).
+--
+-- This is because it is difficult to incorporate type varaible
+-- shadowing into the system as-is without doing a lot of changes. This
+-- restriction prevents the nesting of type variables.
+-- One concern relating to this might be the possibility of evaluation creating
+-- nested type variables. However, it is at present impossible to do. If we have
+-- some arbitrary expression (EForall x. e), we have to, through evaluation, 
+-- somehow insert into e -- an expression involving EForall x. Since type 
+-- variables are unique, the only -- expression suitable would be 
+-- Eforall x. e itself. This would require some sort of recursive type 
+-- (e.g. \x -> x x) which we do not support.
+--
+-- * All types used must be well-formed, e.g. all type variables are bound, etc.
+-- No well-formedness checks exist at present (at least for type variables).
 
 module STLC where 
 
@@ -39,6 +50,7 @@ type Var   = String
 type Label = String
 
 -- Figure out the import for this
+-- but also it isn't super necessary
 type Proof = ()
 data QED = QED
 
@@ -1203,9 +1215,48 @@ test_forall_2 = eval_safe g s e t e_t gs
     e_t = E_Forall g t_x eInner tInner eInner_tInner
     gs = S_Emp
 
+test_tapp_1 = eval_safe g s e t e_t gs
+  where
+    g = TEmp
+    s = VEmp
+    x = "x"
+    eInner = EBool False
+    tInner = TBool
+    eInner_tInner = E_Bool (TTVarBind x g) False
+    e_fa = EForall x eInner
+    t_fa = TForall x tInner
+    e_t_fa = E_Forall g x eInner tInner eInner_tInner
+    e = ETApp e_fa TInt
+    t = TBool
+    e_t = E_TApp g e_fa x TInt tInner e_t_fa
+    gs = S_Emp
+
+test_tapp_2 = eval_safe g s e t e_t gs
+  where
+    g = TEmp
+    s = VEmp
+    t_x = "a" -- both could be "x" but this makes it easier to read
+    v_x = "x"
+    f = "f"
+    eVar = EVar v_x
+    tVar = TVar t_x
+    eVar_tVar = E_Var (TBind v_x tVar (TBind f (TFun tVar tVar) g')) v_x tVar 
+    eInner = EFun f v_x tVar eVar
+    tInner = TFun tVar tVar
+    g' = TTVarBind t_x g
+    eInner_tInner = E_Fun g' f v_x tVar eVar tVar eVar_tVar
+    e_fa = EForall t_x eInner
+    t_fa = TForall t_x tInner
+    e_t_fa = E_Forall g t_x eInner tInner eInner_tInner
+    e = ETApp e_fa TInt
+    t = TFun TInt TInt
+    e_t = E_TApp g e_fa t_x TInt tInner e_t_fa
+    gs = S_Emp
+
 main :: IO ()
 main = do
-  mapM_ (putStrLn . printer) [test_forall_1, test_forall_2]
+  putStrLn . printer $ test_tapp_1
+  putStrLn . printer $ test_tapp_2
   where
     printer resTy = case resTy of
       R_Res val ty valTy -> "val: " ++ show val ++ " type: " ++ show ty
