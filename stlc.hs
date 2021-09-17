@@ -1,4 +1,4 @@
--- http://siek.blogspot.com/2013/05/type-safety-in-three-easy-lemmas.html 
+-- http://siek.blogspot.com/2013/05/type-safety-in-three-easy-lemmas.html
 
 {-@ LIQUID "--reflection"     @-}
 {-@ LIQUID "--ple"            @-}
@@ -15,102 +15,116 @@
 -- restriction prevents the nesting of type variables.
 -- One concern relating to this might be the possibility of evaluation creating
 -- nested type variables. However, it is at present impossible to do. If we have
--- some arbitrary expression (EForall x. e), we have to, through evaluation, 
--- somehow insert into e -- an expression involving EForall x. Since type 
--- variables are unique, the only -- expression suitable would be 
--- Eforall x. e itself. This would require some sort of recursive type 
+-- some arbitrary expression (EForall x. e), we have to, through evaluation,
+-- somehow insert into e -- an expression involving EForall x. Since type
+-- variables are unique, the only -- expression suitable would be
+-- Eforall x. e itself. This would require some sort of recursive type
 -- (e.g. \x -> x x) which we do not support.
 --
 -- * All types used must be well-formed, e.g. all type variables are bound, etc.
 -- No well-formedness checks exist at present (at least for type variables).
 
-module STLC where 
+module STLC where
 
-import Language.Haskell.Liquid.Equational
+-- import Language.Haskell.Liquid.Equational
+import Control.Monad.Trans.RWS.Lazy
+import Control.Monad.Trans.Class (lift)
 
 type TVar  = String
-type Var   = String 
+type Var   = String
 type Label = String
 
 -- -- Figure out the import for this
 -- -- but also it isn't super necessary
--- type Proof = ()
--- data QED = QED
--- 
--- (***) :: a -> QED -> Proof
--- _ *** QED = ()
--- infixl 2 ***
--- 
--- {-@ (==.) :: x:a -> y:{a | x == y} -> {o:a | o == y && o == x} @-}
--- (==.) :: a -> a -> a
--- _ ==. x = x
--- 
--- (?) :: a -> Proof -> a
--- x ? _ = x
+type Proof = ()
+data QED = QED
 
-data Type 
-  = TInt 
-  | TBool 
+(***) :: a -> QED -> Proof
+_ *** QED = ()
+infixl 2 ***
+
+{-@ (==.) :: x:a -> y:{a | x == y} -> {o:a | o == y && o == x} @-}
+(==.) :: a -> a -> a
+_ ==. x = x
+
+(?) :: a -> Proof -> a
+x ? _ = x
+
+data Type
+  = TInt
+  | TBool
   | TVar TVar
   | TFun Type Type
   | TPair Type Type
   | TRecord TRecord
   | TForall TVar Type
-  deriving (Eq, Show) 
+  deriving (Eq, Show)
 
 data TRecord
   = TRecordBind Label Type TRecord
   | TRecordEmp
-  deriving (Eq, Show) 
+  deriving (Eq, Show)
 
-data Op  
-  = Add 
-  | Leq 
-  | And 
-  deriving (Eq, Show) 
+data Op
+  = Add
+  | Leq
+  | And
+  deriving (Eq, Show)
 
-data Expr 
+data ExprU
+  = EUBool Bool
+  | EUVar Var
+  | EUFun Var Var ExprU
+  | EUApp ExprU ExprU
+  deriving (Eq, Show)
+
+data Expr
   = EBool Bool               -- ^ 'EBool b'       is 'b'
   | EInt  Int                -- ^ 'EInt i'        is 'i'
   | EBin  Op Expr Expr       -- ^ 'EBin o e1 e2'  is 'e1 o e2'
   | EVar  Var                -- ^ 'EVar x'        is 'x'
   | EFun  Var Var Type Type Expr  -- ^ 'EFun f x t tret e'  is 'fun tret f(x:t) e'
-  | EApp  Expr Expr          -- ^ 'EApp e1 e2'    is 'e1 e2' 
+  | EApp  Expr Expr          -- ^ 'EApp e1 e2'    is 'e1 e2'
   | EPair Expr Expr          -- ^ 'EPair e1 e2'   is '(e1, e2)'
   | EFst Expr                -- ^ 'EFst e1'       is 'fst e1'
   | ERecordBind Label Expr Expr -- 'ERecordBind'  is record extension
   | ERecordEmp               -- ^ 'ERecordEmp'    is '{}'
   | EForall TVar Expr        -- ^ 'EForall tv e'  is '/\ t. e'
   | ETApp Expr Type          -- ^ 'ETApp e t'     is type application
-  deriving (Eq, Show) 
+  deriving (Eq, Show)
 
-data Val 
-  = VBool Bool 
+data Val
+  = VBool Bool
   | VInt  Int
   | VClos Var Var Expr VEnv
   | VForallClos TVar Expr VEnv
   | VPair Val Val
   | VRecordBind Label Val Val
   | VRecordEmp
-  deriving (Eq, Show) 
+  deriving (Eq, Show)
 
-data Result 
-  = Result Val  
-  | Stuck 
+data Result
+  = Result Val
+  | Stuck
   | Timeout
-  deriving (Eq, Show) 
+  deriving (Eq, Show)
 
-data VEnv  
-  = VBind Var Val VEnv 
+data VEnv
+  = VBind Var Val VEnv
   -- | VTVarBind TVar Type VEnv
-  | VEmp 
-  deriving (Eq, Show) 
+  | VEmp
+  deriving (Eq, Show)
 
-data TEnv  
-  = TBind Var Type TEnv 
+data TEnv
+  = TBind Var Type TEnv
   | TTVarBind TVar TEnv
-  | TEmp 
-  deriving (Eq, Show) 
+  | TEmp
+  deriving (Eq, Show)
+
+data TStore
+  = TSBind Var Type TStore
+  | TSEmp
+  deriving (Eq, Show)
 
 
 {-@ reflect mapTEnv @-}
@@ -143,13 +157,13 @@ mapResult f r = case r of
 {-@ reflect seq2 @-}
 -- seq2 :: (a -> b -> Result c) -> Result a -> Result b -> Result c
 seq2 :: (Val -> Val -> Result) -> Result -> Result -> Result
-seq2 f r1 r2 = case r1 of 
-                 Stuck     -> Stuck 
-                 Timeout   -> Timeout 
-                 Result v1 -> case r2 of 
-                                Stuck     -> Stuck 
-                                Timeout   -> Timeout 
-                                Result v2 -> f v1 v2 
+seq2 f r1 r2 = case r1 of
+                 Stuck     -> Stuck
+                 Timeout   -> Timeout
+                 Result v1 -> case r2 of
+                                Stuck     -> Stuck
+                                Timeout   -> Timeout
+                                Result v2 -> f v1 v2
 
 {-@ reflect substTVar @-}
 substTVar :: TVar -> Type -> Type -> Type
@@ -184,7 +198,7 @@ substTVarExpr x tSub e = case e of
   EFst eInner         -> EFst (substTVarExpr x tSub eInner)
   ERecordBind l e1 e2 -> ERecordBind l (substTVarExpr x tSub e1) (substTVarExpr x tSub e2)
   ERecordEmp          -> e
-  EForall x' eInner 
+  EForall x' eInner
     -- the forall shadows x
     | x == x'   -> e
     | otherwise -> EForall x' (substTVarExpr x tSub eInner)
@@ -192,65 +206,136 @@ substTVarExpr x tSub e = case e of
 
 -- | Inference
 
+-- Constraint-based inference taken from http://dev.stephendiehl.com/fun/006_hindley_milner.html
+type Constraint = (Type, Type)
+type VarCount = Int
+type InferM a = RWST TStore [Constraint] VarCount Maybe a
+
+lookupTStore :: Var -> TStore -> Maybe Type
+lookupTStore x TSEmp = Nothing
+lookupTStore x (TSBind v t ts)
+  | x == v    = Just t
+  | otherwise = lookupTStore x ts
+
+freshTVar :: InferM Type
+freshTVar = do
+  varCount <- get
+  modify (+1)
+  return $ TVar ("tv" ++ show varCount)
+
+unify :: Type -> Type -> InferM ()
+unify t1 t2 = tell [(t1, t2)]
+
+overExtendedEnv :: Var -> Type -> InferM a -> InferM a
+overExtendedEnv x t m = local (TSBind x t) m
+
+genConstraints :: ExprU -> InferM Type
+genConstraints (EUBool _b) = return TBool
+genConstraints (EUVar v) = do 
+  env <- ask
+  lift $ lookupTStore v env
+genConstraints (EUFun f x eu) = do
+  tv <- freshTVar
+  tp <- overExtendedEnv x tv (genConstraints eu)
+  return $ TFun tv tp
+genConstraints (EUApp e1 e2) = do
+  t1 <- genConstraints e1
+  t2 <- genConstraints e2
+  tv <- freshTVar
+  unify t1 (TFun t2 tv)
+  return tv
+
+runGenConstraints :: InferM a -> Maybe (a, [Constraint])
+runGenConstraints m = evalRWST m TSEmp 0
+
+-- TODO: Fix the names for annotate and infer (they are sort of switched)
+-- Possible method of writing inference:
+--  1. Fill in any unknown types with type variables
+--  2. Generate constraints from type variables based on typing rules
+--  3. Solve the constraints to resolve the type variables
+--  4. Substitute the type variables
+-- Test with simple untyped expressions (e.g. Bool & Pair)
+-- Write a lemma for each (?)
+infer :: TStore -> TEnv -> ExprU -> Maybe Expr
+infer = undefined -- TODO
+
+{-@ annotationProof :: eu:ExprU 
+      -> st:TStore
+      -> g:TEnv
+      -> e:Expr 
+      -> t:Type
+      -> {infer st g eu == Just e}
+      -> {erase e == eu}
+      -> {readType e == Just t}
+      -> Prop (ExprTy g e t)
+  @-}
+annotationProof = undefined
+
+{-@ erasure ::
+     -> {annotate st g eu == Just e}
+     -> {erase e == eu}
+  @-}
+erasure = undefined
+
 data TResult
   = TResult Type
   | TStuck
 
-{-@ reflect infer @-}
-infer :: TEnv -> Expr -> TResult
-infer _ (EBool _)           = TResult TBool
-infer _ (EInt _)            = TResult TInt
-infer _ (ERecordEmp)        = TResult (TRecord TRecordEmp)
-infer g (EBin op arg1 arg2) = case (op, infer g arg1, infer g arg2) of
+{-@ reflect readType @-}
+readType :: TEnv -> Expr -> TResult
+readType _ (EBool _)           = TResult TBool
+readType _ (EInt _)            = TResult TInt
+readType _ (ERecordEmp)        = TResult (TRecord TRecordEmp)
+readType g (EBin op arg1 arg2) = case (op, readType g arg1, readType g arg2) of
   (Add, TResult TInt, TResult TInt)   -> TResult TInt
   (Leq, TResult TInt, TResult TInt)   -> TResult TBool
   (And, TResult TBool, TResult TBool) -> TResult TBool
   _                                   -> TStuck
-infer g (EVar var)          = case lookupTEnv var g of
+readType g (EVar var)          = case lookupTEnv var g of
   Just t  -> TResult t
   Nothing -> TStuck
-infer g (EFun f x tArg tRet eInner) = case infer (TBind x tArg (TBind f (TFun tArg tRet) g)) eInner of
+readType g (EFun f x tArg tRet eInner) = case readType (TBind x tArg (TBind f (TFun tArg tRet) g)) eInner of
   TResult _ -> TResult (TFun tArg tRet)
   TStuck   -> TStuck
-infer g (EApp e1 e2)        = case (infer g e1, infer g e2) of
+readType g (EApp e1 e2)        = case (readType g e1, readType g e2) of
   (TResult (TFun t1 t2), TResult t)
     | t == t1 -> TResult t2
   _           -> TStuck
-infer g (EPair e1 e2)       = case (infer g e1, infer g e2) of
+readType g (EPair e1 e2)       = case (readType g e1, readType g e2) of
   (TResult t1, TResult t2) -> TResult (TPair t1 t2)
   _                        -> TStuck
-infer g (EFst e)            = case infer g e of
+readType g (EFst e)            = case readType g e of
   TResult (TPair t1 _) -> TResult t1
   _                    -> TStuck
-infer g (ERecordBind l e1 e2) = case (infer g e1, infer g e2) of
+readType g (ERecordBind l e1 e2) = case (readType g e1, readType g e2) of
   (TResult t1, TResult (TRecord tr)) -> TResult (TRecord (TRecordBind l t1 tr))
   _                                  -> TStuck
-infer g (EForall tv e)        = case (infer (TTVarBind tv g) e) of
+readType g (EForall tv e)        = case (readType (TTVarBind tv g) e) of
   TResult t -> TResult (TForall tv t)
   _         -> TStuck
-infer g (ETApp e t)          = case (infer g e) of
+readType g (ETApp e t)          = case (readType g e) of
   TResult (TForall tv tp) -> TResult (substTVar tv t tp)
   _                       -> TStuck
 
 --------------------------------------------------------------------------------
--- | Evaluator 
+-- | Evaluator
 --------------------------------------------------------------------------------
 
 {-@ reflect lookupVEnv @-}
-lookupVEnv :: Var -> VEnv -> Maybe Val 
-lookupVEnv x VEmp              = Nothing 
+lookupVEnv :: Var -> VEnv -> Maybe Val
+lookupVEnv x VEmp              = Nothing
 lookupVEnv x (VBind y v env)   = if x == y then Just v else lookupVEnv x env
 -- lookupVEnv x (VTVarBind _ _ env) = lookupVEnv x env
 
 {-@ reflect eval @-}
-eval :: VEnv -> Expr -> Result 
+eval :: VEnv -> Expr -> Result
 eval _   (EBool b)    = Result (VBool b)
 eval _   (EInt  n)    = Result (VInt  n)
-eval s (EBin o e1 e2) = seq2 (evalOp o) (eval s e1) (eval s e2) 
-eval s (EVar x)       = case lookupVEnv x s of 
-                          Nothing -> Stuck 
-                          Just v  -> Result v 
-eval s (EFun f x t tRet e) = Result (VClos f x e s) 
+eval s (EBin o e1 e2) = seq2 (evalOp o) (eval s e1) (eval s e2)
+eval s (EVar x)       = case lookupVEnv x s of
+                          Nothing -> Stuck
+                          Just v  -> Result v
+eval s (EFun f x t tRet e) = Result (VClos f x e s)
 eval s (EApp e1 e2)   = seq2 evalApp (eval s e1) (eval s e2)
 eval s (EPair e1 e2)  = seq2 evalPair (eval s e1) (eval s e2)
 eval s (EFst e)       = mapResult evalFst (eval s e)
@@ -264,9 +349,9 @@ evalPair :: Val -> Val -> Result
 evalPair v1 v2 = Result (VPair v1 v2)
 
 {-@ reflect evalApp @-}
-evalApp :: Val -> Val -> Result 
-evalApp v1@(VClos f x e s) v2 = eval (VBind x v2 (VBind f v1 s)) e 
-evalApp _                  _  = Stuck 
+evalApp :: Val -> Val -> Result
+evalApp v1@(VClos f x e s) v2 = eval (VBind x v2 (VBind f v1 s)) e
+evalApp _                  _  = Stuck
 
 {-@ reflect evalFst @-}
 evalFst :: Val -> Result
@@ -286,66 +371,66 @@ evalTApp t (VForallClos x e s) = eval s (substTVarExpr x t e)
 evalTApp _ _ = Stuck
 
 {-@ reflect evalOp @-}
-evalOp :: Op -> Val -> Val -> Result 
+evalOp :: Op -> Val -> Val -> Result
 evalOp Add (VInt n1)  (VInt n2)  = Result (VInt  (n1 +  n2))
 evalOp Leq (VInt n1)  (VInt n2)  = Result (VBool (n1 <= n2))
-evalOp And (VBool b1) (VBool b2) = Result (VBool (b1 && b2)) 
-evalOp _   _          _          = Stuck 
+evalOp And (VBool b1) (VBool b2) = Result (VBool (b1 && b2))
+evalOp _   _          _          = Stuck
 
 --------------------------------------------------------------------------------
--- | Tests before proofs 
+-- | Tests before proofs
 --------------------------------------------------------------------------------
 
 tests  = [ e1              -- 15
          , EBin Leq e1 e1  -- True
          , EBin And e1 e1  -- Stuck!
          ]
-  where 
+  where
     e1 = EBin Add (EInt 5) (EInt 10)
 
 --------------------------------------------------------------------------------
--- | Typing Results 
+-- | Typing Results
 --------------------------------------------------------------------------------
 
 {- [ |- r : T ]
 
 
-    |- v : T 
+    |- v : T
   -------------------- [R_Res]
-    |- Result v : T  
+    |- Result v : T
 
   -------------------- [R_Time]
-    |- Timeout  : T  
+    |- Timeout  : T
 
 -}
 
 {-@ data ResTy where
-      R_Res  :: x:Val -> t:Type -> Prop (ValTy x t) -> Prop (ResTy (Result x) t) 
-      R_Time :: t:Type -> Prop (ResTy Timeout t) 
+      R_Res  :: x:Val -> t:Type -> Prop (ValTy x t) -> Prop (ResTy (Result x) t)
+      R_Time :: t:Type -> Prop (ResTy Timeout t)
   @-}
 
-data ResTyP where 
-  ResTy  :: Result -> Type -> ResTyP 
+data ResTyP where
+  ResTy  :: Result -> Type -> ResTyP
 
-data ResTy where 
-  R_Res  :: Val -> Type -> ValTy -> ResTy 
-  R_Time :: Type -> ResTy 
+data ResTy where
+  R_Res  :: Val -> Type -> ValTy -> ResTy
+  R_Time :: Type -> ResTy
 
 --------------------------------------------------------------------------------
--- | Typing Values 
+-- | Typing Values
 --------------------------------------------------------------------------------
 
-{- [ |- v : T ] 
+{- [ |- v : T ]
 
     ----------------------- [V_Bool]
       |- VBool b : TBool
 
     ----------------------- [V_Int]
-      |- VInt i : TInt 
-   
-    g |- s  (x,t1), (f,t1->t2),g |- e : t2 
+      |- VInt i : TInt
+
+    g |- s  (x,t1), (f,t1->t2),g |- e : t2
     --------------------------------------- [V_Clos]
-      |- VClos f x e s : t1 -> t2 
+      |- VClos f x e s : t1 -> t2
 
           |- v1 : t1  |- v2 : t2
     ------------------------------ [V_Pair]
@@ -354,29 +439,29 @@ data ResTy where
     --------------------------------------- [V_RecordEmp]
       |- VRecordEmp : TRecord (TRecordEmp)
 
-      |- val : t     |- vr : (TRecord tr) 
+      |- val : t     |- vr : (TRecord tr)
     ---------------------------------------- [V_RecordBind]
       |- VRecordBind l val vr : TRecord (TRecordBind l t tr)
 
       g |- s    g, tv |- v : t
     ----------------------------- [V_Forall]  TODO: Change to a closure akin to V_Clos
       |- VForall tv e : TForall tv t
-    
+
  -}
 
 {-@ data ValTy where
-      V_Bool :: b:Bool -> Prop (ValTy (VBool b) TBool) 
-      V_Int  :: i:Int  -> Prop (ValTy (VInt i)  TInt) 
-      V_Clos :: g:TEnv -> s:VEnv -> f:Var -> x:Var -> t1:Type -> t2:Type -> e:Expr 
-             -> Prop (StoTy g s) 
+      V_Bool :: b:Bool -> Prop (ValTy (VBool b) TBool)
+      V_Int  :: i:Int  -> Prop (ValTy (VInt i)  TInt)
+      V_Clos :: g:TEnv -> s:VEnv -> f:Var -> x:Var -> t1:Type -> t2:Type -> e:Expr
+             -> Prop (StoTy g s)
              -> Prop (ExprTy (TBind x t1 (TBind f (TFun t1 t2) g)) e t2)
-             -> Prop (ValTy (VClos f x e s) (TFun t1 t2)) 
+             -> Prop (ValTy (VClos f x e s) (TFun t1 t2))
       V_ForallClos :: g:TEnv -> s:VEnv -> x:TVar -> t:Type -> e:Expr
                    -> Prop (StoTy g s)
                    -> Prop (ExprTy (TTVarBind x g) e t)
                    -> Prop (ValTy (VForallClos x e s) (TForall x t))
-      V_Pair :: v1:Val -> v2:Val -> t1:Type -> t2:Type 
-             -> Prop (ValTy v1 t1) 
+      V_Pair :: v1:Val -> v2:Val -> t1:Type -> t2:Type
+             -> Prop (ValTy v1 t1)
              -> Prop (ValTy v2 t2)
              -> Prop (ValTy (VPair v1 v2) (TPair t1 t2))
       V_RecordBind :: l:Label -> val:Val -> rcd:Val -> t:Type -> tr:TRecord
@@ -386,30 +471,30 @@ data ResTy where
       V_RecordEmp :: Prop (ValTy VRecordEmp (TRecord TRecordEmp))
   @-}
 
-data ValTyP where 
-  ValTy  :: Val -> Type -> ValTyP 
+data ValTyP where
+  ValTy  :: Val -> Type -> ValTyP
 
-data ValTy where 
-  V_Bool   :: Bool -> ValTy 
-  V_Int    :: Int  -> ValTy 
-  V_Clos   :: TEnv -> VEnv -> Var -> Var -> Type -> Type -> Expr -> StoTy -> ExprTy  -> ValTy 
-  V_ForallClos :: TEnv -> VEnv -> TVar -> Type -> Expr -> StoTy -> ExprTy  -> ValTy 
+data ValTy where
+  V_Bool   :: Bool -> ValTy
+  V_Int    :: Int  -> ValTy
+  V_Clos   :: TEnv -> VEnv -> Var -> Var -> Type -> Type -> Expr -> StoTy -> ExprTy  -> ValTy
+  V_ForallClos :: TEnv -> VEnv -> TVar -> Type -> Expr -> StoTy -> ExprTy  -> ValTy
   V_Pair   :: Val -> Val -> Type -> Type -> ValTy -> ValTy -> ValTy
   V_RecordBind :: Label -> Val -> Val -> Type -> TRecord -> ValTy -> ValTy -> ValTy
   V_RecordEmp :: ValTy
 
 --------------------------------------------------------------------------------
--- | Typing Stores 
+-- | Typing Stores
 --------------------------------------------------------------------------------
 
-{- [ G |- S ] 
+{- [ G |- S ]
 
    ------------------------[S_Emp]
-   TEmp |- VEmp 
+   TEmp |- VEmp
 
-      |- v : t   g |- s 
+      |- v : t   g |- s
    ------------------------[S_Bind]
-   (x, t), g |- (x, v), s 
+   (x, t), g |- (x, v), s
 
       g |- s
    ------------------------[S_BindTVar]
@@ -418,71 +503,71 @@ data ValTy where
  -}
 
 {-@ data StoTy where
-      S_Emp  :: Prop (StoTy TEmp VEmp) 
+      S_Emp  :: Prop (StoTy TEmp VEmp)
       S_Bind :: x:Var -> t:Type -> val:Val -> g:TEnv -> s:VEnv
-             -> Prop (ValTy val t) 
-             -> Prop (StoTy g   s) 
-             -> Prop (StoTy (TBind x t g) (VBind x val s)) 
+             -> Prop (ValTy val t)
+             -> Prop (StoTy g   s)
+             -> Prop (StoTy (TBind x t g) (VBind x val s))
       S_TVarBind :: x:TVar -> g:TEnv -> s:VEnv
                  -> Prop (StoTy g s)
                  -> Prop (StoTy (TTVarBind x g) s)
   @-}
 
-data StoTyP where 
-  StoTy  :: TEnv -> VEnv -> StoTyP 
+data StoTyP where
+  StoTy  :: TEnv -> VEnv -> StoTyP
 
-data StoTy where 
-  S_Emp  :: StoTy 
-  S_Bind :: Var -> Type -> Val -> TEnv -> VEnv -> ValTy -> StoTy -> StoTy 
+data StoTy where
+  S_Emp  :: StoTy
+  S_Bind :: Var -> Type -> Val -> TEnv -> VEnv -> ValTy -> StoTy -> StoTy
   S_TVarBind :: TVar -> TEnv -> VEnv -> StoTy -> StoTy
 
 --------------------------------------------------------------------------------
--- | Typing Expressions 
+-- | Typing Expressions
 --------------------------------------------------------------------------------
 
 {-@ reflect opIn @-}
-opIn :: Op -> Type 
-opIn Add = TInt 
-opIn Leq = TInt 
+opIn :: Op -> Type
+opIn Add = TInt
+opIn Leq = TInt
 opIn And = TBool
 
 {-@ reflect opOut @-}
-opOut :: Op -> Type 
-opOut Add = TInt 
-opOut Leq = TBool 
+opOut :: Op -> Type
+opOut Add = TInt
+opOut Leq = TBool
 opOut And = TBool
 
 {-@ reflect lookupTEnv @-}
-lookupTEnv :: Var -> TEnv -> Maybe Type 
-lookupTEnv x TEmp             = Nothing 
+lookupTEnv :: Var -> TEnv -> Maybe Type
+lookupTEnv x TEmp             = Nothing
 lookupTEnv x (TBind y v env)  = if x == y then Just v else lookupTEnv x env
 lookupTEnv x (TTVarBind _ env)  = lookupTEnv x env
 
 
-{- 
+{-
 
   --------------------------------------[E-Bool]
     G |- EBool b : TBool
 
   --------------------------------------[E-Int]
-    G |- EInt n  : TInt 
+    G |- EInt n  : TInt
 
     lookupTEnv x G = Just t
   --------------------------------------[E-Var]
-    G |- Var x  : t 
+    G |- Var x  : t
 
-    G |- e1 : opIn o  G |- e2 : opIn o 
+    G |- e1 : opIn o  G |- e2 : opIn o
   --------------------------------------[E-Bin]
     G |- EBin o e1 e2 : opOut o
 
 
-    (x,t1), (f, t1->t2), G |- e : t2 
+    (x,t1), (f, t1->t2), G |- e : t2
   --------------------------------------[E-Fun]
-    G |- EFun f x t1 t2 e : t1 -> t2 
+    G |- EFun f x t1 t2 e : t1 -> t2
 
-    G |- e1 : t1 -> t2   G |- e2 : t1 
+    G |- e1 : t1 -> t2   G |- e2 : t1
   --------------------------------------[E-App]
-    G |- EApp e1 e2 : t2 
+    G |- EApp e1 e2 : t2
 
   --------------------------------------[E-RecordEmp]
     G |- ERecordEmp : TRecord TRecordEmp
@@ -505,21 +590,21 @@ lookupTEnv x (TTVarBind _ env)  = lookupTEnv x env
 -- Add a Type well-formedness check wherever types are introduced (E_Fun t1,
 -- E_TApp t), add a lemma that says if G |- e : t, then G |- t.
 
-{-@ data ExprTy where 
-      E_Bool :: g:TEnv -> b:Bool 
+{-@ data ExprTy where
+      E_Bool :: g:TEnv -> b:Bool
              -> Prop (ExprTy g (EBool b) TBool)
-      E_Int  :: g:TEnv -> i:Int  
+      E_Int  :: g:TEnv -> i:Int
              -> Prop (ExprTy g (EInt i)  TInt)
-      E_Bin  :: g:TEnv -> o:Op -> e1:Expr -> e2:Expr 
-             -> Prop (ExprTy g e1 (opIn o)) 
+      E_Bin  :: g:TEnv -> o:Op -> e1:Expr -> e2:Expr
+             -> Prop (ExprTy g e1 (opIn o))
              -> Prop (ExprTy g e2 (opIn o))
              -> Prop (ExprTy g (EBin o e1 e2) (opOut o))
-      E_Var  :: g:TEnv -> x:Var -> t:{Type| lookupTEnv x g == Just t} 
+      E_Var  :: g:TEnv -> x:Var -> t:{Type| lookupTEnv x g == Just t}
              -> Prop (ExprTy g (EVar x) t)
       E_Fun  :: g:TEnv -> f:Var -> x:Var -> t1:Type -> e:Expr -> t2:Type
              -> Prop (ExprTy (TBind x t1 (TBind f (TFun t1 t2) g)) e t2)
-             -> Prop (ExprTy g (EFun f x t1 t2 e) (TFun t1 t2))       
-      E_App  :: g:TEnv -> e1:Expr -> e2:Expr -> t1:Type -> t2:Type 
+             -> Prop (ExprTy g (EFun f x t1 t2 e) (TFun t1 t2))
+      E_App  :: g:TEnv -> e1:Expr -> e2:Expr -> t1:Type -> t2:Type
              -> Prop (ExprTy g e1 (TFun t1 t2))
              -> Prop (ExprTy g e2 t1)
              -> Prop (ExprTy g (EApp e1 e2) t2)
@@ -537,22 +622,22 @@ lookupTEnv x (TTVarBind _ env)  = lookupTEnv x env
       E_RecordEmp :: g:TEnv -> Prop (ExprTy g ERecordEmp (TRecord TRecordEmp))
       E_Forall :: g:TEnv -> x:TVar -> e:Expr -> t:Type
              -> Prop (ExprTy (TTVarBind x g) e t)
-             -> Prop (ExprTy g (EForall x e) (TForall x t))       
+             -> Prop (ExprTy g (EForall x e) (TForall x t))
       E_TApp :: g:TEnv -> e:Expr -> x:TVar -> t_x:Type -> t_fa:Type
                -> Prop (ExprTy g e (TForall x t_fa))
                -> Prop (ExprTy g (ETApp e t_x) (substTVar x t_x t_fa))
   @-}
 
-data ExprTyP where 
-  ExprTy :: TEnv -> Expr -> Type -> ExprTyP  
+data ExprTyP where
+  ExprTy :: TEnv -> Expr -> Type -> ExprTyP
 
-data ExprTy where 
-  E_Bool   :: TEnv -> Bool -> ExprTy 
-  E_Int    :: TEnv -> Int  -> ExprTy 
-  E_Var    :: TEnv -> Var  -> Type -> ExprTy 
-  E_Bin    :: TEnv -> Op   -> Expr -> Expr -> ExprTy -> ExprTy -> ExprTy 
-  E_Fun    :: TEnv -> Var -> Var -> Type -> Expr -> Type -> ExprTy -> ExprTy 
-  E_App    :: TEnv -> Expr -> Expr -> Type -> Type -> ExprTy -> ExprTy -> ExprTy 
+data ExprTy where
+  E_Bool   :: TEnv -> Bool -> ExprTy
+  E_Int    :: TEnv -> Int  -> ExprTy
+  E_Var    :: TEnv -> Var  -> Type -> ExprTy
+  E_Bin    :: TEnv -> Op   -> Expr -> Expr -> ExprTy -> ExprTy -> ExprTy
+  E_Fun    :: TEnv -> Var -> Var -> Type -> Expr -> Type -> ExprTy -> ExprTy
+  E_App    :: TEnv -> Expr -> Expr -> Type -> Type -> ExprTy -> ExprTy -> ExprTy
   E_Pair   :: TEnv -> Expr -> Expr -> Type -> Type -> ExprTy -> ExprTy -> ExprTy
   E_Fst    :: TEnv -> Expr -> Type -> Type -> ExprTy -> ExprTy
   E_RecordBind :: TEnv -> Label -> Expr -> Expr -> Type -> TRecord -> ExprTy -> ExprTy -> ExprTy
@@ -561,67 +646,67 @@ data ExprTy where
   E_TApp :: TEnv -> Expr -> TVar -> Type -> Type -> ExprTy -> ExprTy
 
 --------------------------------------------------------------------------------
--- | Lemma 1: "evalOp_safe" 
+-- | Lemma 1: "evalOp_safe"
 --------------------------------------------------------------------------------
 
 {-@ reflect isValTy @-}
-isValTy :: Val -> Type -> Bool 
-isValTy (VInt _)  TInt  = True 
-isValTy (VBool _) TBool = True 
-isValTy _         _     = False 
+isValTy :: Val -> Type -> Bool
+isValTy (VInt _)  TInt  = True
+isValTy (VBool _) TBool = True
+isValTy _         _     = False
 
 {-@ propValTy :: o:Op -> w:Val -> Prop (ValTy w (opIn o)) -> { w' : Val | w = w' && isValTy w' (opIn o) } @-}
-propValTy :: Op -> Val -> ValTy -> Val 
-propValTy Add w (V_Int _) = w 
-propValTy Leq w (V_Int _)  = w 
-propValTy And w (V_Bool _) = w 
+propValTy :: Op -> Val -> ValTy -> Val
+propValTy Add w (V_Int _) = w
+propValTy Leq w (V_Int _)  = w
+propValTy And w (V_Bool _) = w
 
-{-@ evalOp_safe 
-      :: o:Op -> v1:{Val | isValTy v1 (opIn o) } -> v2:{Val | isValTy v2 (opIn o) } 
+{-@ evalOp_safe
+      :: o:Op -> v1:{Val | isValTy v1 (opIn o) } -> v2:{Val | isValTy v2 (opIn o) }
       -> (v :: Val, ( {y:() | evalOp o v1 v2 == Result v} , {z:ValTy | prop z = ValTy v (opOut o)}))
   @-}
 evalOp_safe :: Op -> Val -> Val -> (Val, ((), ValTy))
-evalOp_safe Add (VInt n1) (VInt n2)   = (VInt n, ((), V_Int n))   where n = n1 + n2 
-evalOp_safe Leq (VInt n1) (VInt n2)   = (VBool b, ((), V_Bool b)) where b = n1 <= n2 
-evalOp_safe And (VBool b1) (VBool b2) = (VBool b, ((), V_Bool b)) where b = b1 && b2 
+evalOp_safe Add (VInt n1) (VInt n2)   = (VInt n, ((), V_Int n))   where n = n1 + n2
+evalOp_safe Leq (VInt n1) (VInt n2)   = (VBool b, ((), V_Bool b)) where b = n1 <= n2
+evalOp_safe And (VBool b1) (VBool b2) = (VBool b, ((), V_Bool b)) where b = b1 && b2
 
 
 
-{-@ evalOp_res_safe 
+{-@ evalOp_res_safe
       :: o:Op -> r1:Result -> r2:Result
       -> Prop (ResTy r1 (opIn o))
       -> Prop (ResTy r2 (opIn o))
-      -> Prop (ResTy (seq2 (evalOp o) r1 r2) (opOut o)) 
+      -> Prop (ResTy (seq2 (evalOp o) r1 r2) (opOut o))
   @-}
 evalOp_res_safe :: Op -> Result -> Result -> ResTy -> ResTy -> ResTy
-evalOp_res_safe o (Result v1) (Result v2) (R_Res _ t1 vt1) (R_Res _ t2 vt2) 
-  = case evalOp_safe o (propValTy o v1 vt1) (propValTy o v2 vt2) of 
-      (v, (_, vt)) -> R_Res v (opOut o) vt  
-evalOp_res_safe o _ _  (R_Time t1) _ 
+evalOp_res_safe o (Result v1) (Result v2) (R_Res _ t1 vt1) (R_Res _ t2 vt2)
+  = case evalOp_safe o (propValTy o v1 vt1) (propValTy o v2 vt2) of
+      (v, (_, vt)) -> R_Res v (opOut o) vt
+evalOp_res_safe o _ _  (R_Time t1) _
   = R_Time (opOut o)
-evalOp_res_safe o _ _  _ (R_Time t2) 
+evalOp_res_safe o _ _  _ (R_Time t2)
   = R_Time (opOut o)
 
 --------------------------------------------------------------------------------
 -- | Lemma 2: "lookup_safe"
 --------------------------------------------------------------------------------
-{-@ lookup_safe :: g:TEnv -> s:VEnv -> x:Var -> t:{Type | lookupTEnv x g == Just t} 
-                -> Prop (StoTy g s) 
+{-@ lookup_safe :: g:TEnv -> s:VEnv -> x:Var -> t:{Type | lookupTEnv x g == Just t}
+                -> Prop (StoTy g s)
                 -> (w :: Val, ({z:() | lookupVEnv x s ==  Just w} , {z:ValTy | prop z = ValTy w t} ))
   @-}
-lookup_safe :: TEnv -> VEnv -> Var -> Type -> StoTy -> (Val, ((), ValTy)) 
-lookup_safe _ _ _ _ S_Emp 
-  = trivial () 
-lookup_safe g s x t (S_Bind y yt yv g' s' yvt gs')  
-  | x == y 
-  = (yv, ((), yvt)) 
-  | otherwise 
-  = lookup_safe g' s' x t gs' 
+lookup_safe :: TEnv -> VEnv -> Var -> Type -> StoTy -> (Val, ((), ValTy))
+lookup_safe _ _ _ _ S_Emp
+  = trivial ()
+lookup_safe g s x t (S_Bind y yt yv g' s' yvt gs')
+  | x == y
+  = (yv, ((), yvt))
+  | otherwise
+  = lookup_safe g' s' x t gs'
 lookup_safe _ _ x t (S_TVarBind _ g' s' gs')
   = lookup_safe g' s' x t gs'
 
 --------------------------------------------------------------------------------
--- | Lemma 3: "app_safe" 
+-- | Lemma 3: "app_safe"
 --------------------------------------------------------------------------------
 
 {-@ substTVarContext
@@ -771,7 +856,7 @@ substTVarExprTy g s _ _ x t_x g' e_t = case e_t of
         e2_tIn' = substTVarExprTy g s e2 tIn x t_x g' e2_tIn
      -- need to somehow convince liquid haskell that substTVar x t_x (opIn o) = opIn o
      in E_Bin g' o (substTVarExpr x t_x e1) (substTVarExpr x t_x e2) e1_tIn' e2_tIn'
-  E_Var _ x_var t -> 
+  E_Var _ x_var t ->
     let t' = fixSubstVar x_var (substTVar x t_x t) g' (mapTEnvPreservesLookup x_var g t (substTVar x t_x))
      in E_Var g' x_var t'
   E_Fun _ f xArg t1 eInner t2 e_t2 ->
@@ -819,11 +904,11 @@ substTVarExprTy g s _ _ x t_x g' e_t = case e_t of
     -- x' shadows x, so do no substitution.
     -- TODO t_x cannot reference x'
     | x == x'   -> undefined -- FIXME
-    | otherwise -> 
+    | otherwise ->
       let t' = substTVar x t_x t
           eInner' = substTVarExpr x t_x eInner
           eInner_t' = substTVarExprTy (TTVarBind x' g) s eInner t x t_x (TTVarBind x' g') eInner_t
-       in E_Forall g' x' eInner' t' eInner_t' 
+       in E_Forall g' x' eInner' t' eInner_t'
         ? substTForallVarNotEqP x' t x t_x ()
         ? substEForallVarNotEqP x' eInner x t_x ()
   -- We want to substitute on t_x' always (it can't shadow this variable). We might not substitute inside
@@ -857,11 +942,11 @@ evalTApp_safe v@(VForallClos _ _e _s) x t_fa t_x (V_ForallClos g s _x _t e gs e_
     (g', gs') = substTVarContext g_x s undefined x t_x
     e_t' = substTVarExprTy g_x s e t_fa x t_x g' e_t
 
-evalTApp_safe (VInt {}) _ _ _ (V_ForallClos {}) 
-  = trivial () 
+evalTApp_safe (VInt {}) _ _ _ (V_ForallClos {})
+  = trivial ()
 
-evalTApp_safe (VBool {}) _ _ _ (V_ForallClos {}) 
-  = trivial () 
+evalTApp_safe (VBool {}) _ _ _ (V_ForallClos {})
+  = trivial ()
 
 evalTApp_safe (VPair {}) _ _ _ (V_ForallClos {})
   = trivial ()
@@ -886,28 +971,28 @@ evalTApp_res_safe (Result v) x t_fa t_x (R_Res _ _ v_t_fa)
 evalTApp_res_safe _ x t_fa t_x (R_Time {})
   = R_Time (substTVar x t_x t_fa)
 
-{-@ evalApp_safe 
+{-@ evalApp_safe
       :: v1:Val -> v2:Val -> t1:Type -> t2:Type
-      -> Prop (ValTy v1 (TFun t1 t2)) 
+      -> Prop (ValTy v1 (TFun t1 t2))
       -> Prop (ValTy v2 t1)
-      -> Prop (ResTy (evalApp v1 v2) t2) 
+      -> Prop (ResTy (evalApp v1 v2) t2)
   @-}
-evalApp_safe :: Val -> Val -> Type -> Type -> ValTy -> ValTy -> ResTy 
-evalApp_safe v1@(VClos f x e s) v2 t1 t2 v1_t1_t2@(V_Clos g _ _ _ _ _ _ g_s gxf_e_t2) v2_t1 
-  = eval_safe gxf sxf e t2 gxf_e_t2 gxf_sxf  
-  where 
+evalApp_safe :: Val -> Val -> Type -> Type -> ValTy -> ValTy -> ResTy
+evalApp_safe v1@(VClos f x e s) v2 t1 t2 v1_t1_t2@(V_Clos g _ _ _ _ _ _ g_s gxf_e_t2) v2_t1
+  = eval_safe gxf sxf e t2 gxf_e_t2 gxf_sxf
+  where
     gf      = TBind f (TFun t1 t2) g
     sf      = VBind f v1           s
-    gxf     = TBind x t1 gf 
-    sxf     = VBind x v2 sf  
-    gf_sf   = S_Bind f (TFun t1 t2) v1 g  s  v1_t1_t2 g_s 
-    gxf_sxf = S_Bind x t1           v2 gf sf v2_t1    gf_sf             
-    
-evalApp_safe (VInt {}) _ _ _ (V_Clos {}) _ 
-  = trivial () 
+    gxf     = TBind x t1 gf
+    sxf     = VBind x v2 sf
+    gf_sf   = S_Bind f (TFun t1 t2) v1 g  s  v1_t1_t2 g_s
+    gxf_sxf = S_Bind x t1           v2 gf sf v2_t1    gf_sf
 
-evalApp_safe (VBool {}) _ _ _ (V_Clos {}) _ 
-  = trivial () 
+evalApp_safe (VInt {}) _ _ _ (V_Clos {}) _
+  = trivial ()
+
+evalApp_safe (VBool {}) _ _ _ (V_Clos {}) _
+  = trivial ()
 
 evalApp_safe (VPair {}) _ _ _ (V_Clos {}) _
   = trivial ()
@@ -922,19 +1007,19 @@ evalApp_safe (VForallClos {}) _ _ _ (V_Clos {}) _
   = trivial ()
 
 
-{-@ evalApp_res_safe 
+{-@ evalApp_res_safe
       :: r1:Result -> r2:Result -> t1:Type -> t2:Type
-      -> Prop (ResTy r1 (TFun t1 t2)) 
+      -> Prop (ResTy r1 (TFun t1 t2))
       -> Prop (ResTy r2 t1)
       -> Prop (ResTy (seq2 evalApp r1 r2) t2)
   @-}
-evalApp_res_safe :: Result -> Result -> Type -> Type -> ResTy -> ResTy -> ResTy 
+evalApp_res_safe :: Result -> Result -> Type -> Type -> ResTy -> ResTy -> ResTy
 evalApp_res_safe (Result v1) (Result v2) t1 t2 (R_Res _ _ v1_t1_t2) (R_Res _ _ v2_t1)
-  = evalApp_safe v1 v2 t1 t2 v1_t1_t2 v2_t1 
-evalApp_res_safe _ _ _ t2 (R_Time {}) _ 
-  = R_Time t2 
-evalApp_res_safe _ _ _ t2 _ (R_Time {}) 
-  = R_Time t2 
+  = evalApp_safe v1 v2 t1 t2 v1_t1_t2 v2_t1
+evalApp_res_safe _ _ _ t2 (R_Time {}) _
+  = R_Time t2
+evalApp_res_safe _ _ _ t2 _ (R_Time {})
+  = R_Time t2
 
 {-@ evalPair_safe
      :: v1:Val -> v2:Val -> t1:Type -> t2:Type
@@ -1022,7 +1107,7 @@ evalRecord_safe _ _ (VClos {}) _ _ _ (V_RecordEmp {})
 evalRecord_safe _ _ (VForallClos {}) _ _ _ (V_RecordEmp {})
   = trivial ()
 evalRecord_safe l val vr t tr val_t vr_tr =
-  R_Res vrecord trecord vrecord_trecord 
+  R_Res vrecord trecord vrecord_trecord
   where
     vrecord = VRecordBind l val vr
     trecord = TRecord (TRecordBind l t tr)
@@ -1043,81 +1128,72 @@ evalRecord_res_safe l _ _ t tr _ (R_Time {}) =
   R_Time (TRecord (TRecordBind l t tr))
 
 --------------------------------------------------------------------------------
--- | THEOREM: "eval_safe" 
+-- | THEOREM: "eval_safe"
 --------------------------------------------------------------------------------
 
-{-@ inferTest :: b:Bool -> {infer TEmp (EBool b) == TResult TBool} @-}
-inferTest :: Bool -> Proof
-inferTest b =
-  infer TEmp (EBool b) ==. TResult TBool
-  *** QED
-
--- TODO write infer (straightforwardly)
--- write proof of inference (less so?)
-{-@ inference :: g:TEnv -> e:Expr -> t:Type
+{-@ readTypeSafe :: g:TEnv -> e:Expr -> t:Type
               -> Prop (ExprTy g e t)
-              -> {infer g e == TResult t}
+              -> {readType g e == TResult t}
   @-}
-
-inference :: TEnv -> Expr -> Type -> ExprTy -> Proof
-inference g e@(EBool b) _ (E_Bool _ _) 
-  =   infer g e 
+readTypeSafe :: TEnv -> Expr -> Type -> ExprTy -> Proof
+readTypeSafe g e@(EBool b) _ (E_Bool _ _)
+  =   readType g e
   ==. TResult TBool
   *** QED
-inference g e@(EInt i) _ (E_Int _ _)
-  =   infer g e 
+readTypeSafe g e@(EInt i) _ (E_Int _ _)
+  =   readType g e
   ==. TResult TInt
   *** QED
-inference g e@ERecordEmp _ (E_RecordEmp _)
-  =   infer g e 
+readTypeSafe g e@ERecordEmp _ (E_RecordEmp _)
+  =   readType g e
   ==. TResult (TRecord TRecordEmp)
   *** QED
-inference g e@(EBin o e1 e2) t (E_Bin _ _ _ _ e1_t1 e2_t2)
-  =   infer g e
-  ?   inference g e1 (opIn o) e1_t1
-  ?   inference g e2 (opIn o) e2_t2
+readTypeSafe g e@(EBin o e1 e2) t (E_Bin _ _ _ _ e1_t1 e2_t2)
+  =   readType g e
+  ?   readTypeSafe g e1 (opIn o) e1_t1
+  ?   readTypeSafe g e2 (opIn o) e2_t2
   ==. TResult (opOut o)
   *** QED
-inference g e@(EVar var) _ (E_Var _ _ t)
-  =   infer g e
+readTypeSafe g e@(EVar var) _ (E_Var _ _ t)
+  =   readType g e
   ==. TResult t
   *** QED
-inference g e@(EFun f x tArg tRet eInner) _ (E_Fun _ _ _ _ _ _ e_tRet)
-  =   infer g e
-  ?   inference (TBind x tArg (TBind f (TFun tArg tRet) g)) eInner tRet e_tRet
+readTypeSafe g e@(EFun f x tArg tRet eInner) _ (E_Fun _ _ _ _ _ _ e_tRet)
+  =   readType g e
+  ?   readTypeSafe (TBind x tArg (TBind f (TFun tArg tRet) g)) eInner tRet e_tRet
   ==. TResult (TFun tArg tRet)
   *** QED
-inference g e@(EApp e1 e2) _ (E_App _ _ _ t1 t2 e1_t1_t2 e2_t1)
-  =   infer g e
-  ?   inference g e1 (TFun t1 t2) e1_t1_t2
-  ?   inference g e2 t1 e2_t1
+readTypeSafe g e@(EApp e1 e2) _ (E_App _ _ _ t1 t2 e1_t1_t2 e2_t1)
+  =   readType g e
+  ?   readTypeSafe g e1 (TFun t1 t2) e1_t1_t2
+  ?   readTypeSafe g e2 t1 e2_t1
   ==. TResult t2
   *** QED
-inference g e@(EPair e1 e2) _ (E_Pair _ _ _ t1 t2 e1_t1 e2_t2)
-  =   infer g e
-  ?   inference g e1 t1 e1_t1
-  ?   inference g e2 t2 e2_t2
+readTypeSafe g e@(EPair e1 e2) _ (E_Pair _ _ _ t1 t2 e1_t1 e2_t2)
+  =   readType g e
+  ?   readTypeSafe g e1 t1 e1_t1
+  ?   readTypeSafe g e2 t2 e2_t2
   ==. TResult (TPair t1 t2)
   *** QED
-inference g e@(EFst ePair) _ (E_Fst _ _ t1 t2 ePair_t1_t2)
-  =   infer g e
-  ?   inference g ePair (TPair t1 t2) ePair_t1_t2
+readTypeSafe g e@(EFst ePair) _ (E_Fst _ _ t1 t2 ePair_t1_t2)
+  =   readType g e
+  ?   readTypeSafe g ePair (TPair t1 t2) ePair_t1_t2
   ==. TResult t1
   *** QED
-inference g (ERecordBind l e er) _ (E_RecordBind _ _ _ _ t tr e_t er_tr)
-  =   infer g (ERecordBind l e er)
-  ?   inference g e t e_t
-  ?   inference g er (TRecord tr) er_tr
+readTypeSafe g (ERecordBind l e er) _ (E_RecordBind _ _ _ _ t tr e_t er_tr)
+  =   readType g (ERecordBind l e er)
+  ?   readTypeSafe g e t e_t
+  ?   readTypeSafe g er (TRecord tr) er_tr
   ==. TResult (TRecord (TRecordBind l t tr))
   *** QED
-inference g (EForall tv e) _ (E_Forall _ _ _ t e_t)
-  =   infer g (EForall tv e)
-  ?   inference (TTVarBind tv g) e t e_t
+readTypeSafe g (EForall tv e) _ (E_Forall _ _ _ t e_t)
+  =   readType g (EForall tv e)
+  ?   readTypeSafe (TTVarBind tv g) e t e_t
   ==. TResult (TForall tv t)
   *** QED
-inference g (ETApp e t) _ (E_TApp _ _ x t_x t_fa e_t_fa)
-  =   infer g (ETApp e t)
-  ?   inference g e (TForall x t_fa) e_t_fa
+readTypeSafe g (ETApp e t) _ (E_TApp _ _ x t_x t_fa e_t_fa)
+  =   readType g (ETApp e t)
+  ?   readTypeSafe g e (TForall x t_fa) e_t_fa
   ==. TResult (substTVar x t_x t_fa)
   *** QED
 
@@ -1126,31 +1202,31 @@ inference g (ETApp e t) _ (E_TApp _ _ x t_x t_fa e_t_fa)
 --                -> Prop (ExprTy g e t)
 --   @-}
 
-{-@ eval_safe :: g:TEnv -> s:VEnv -> e:Expr -> t:Type 
-              -> Prop (ExprTy g e t) 
-              -> Prop (StoTy  g s) 
+{-@ eval_safe :: g:TEnv -> s:VEnv -> e:Expr -> t:Type
+              -> Prop (ExprTy g e t)
+              -> Prop (StoTy  g s)
               -> Prop (ResTy (eval s e) t)
   @-}
-eval_safe :: TEnv -> VEnv -> Expr -> Type -> ExprTy -> StoTy -> ResTy 
+eval_safe :: TEnv -> VEnv -> Expr -> Type -> ExprTy -> StoTy -> ResTy
 
-eval_safe _ _ (EBool b) _ (E_Bool {}) _          
-  = R_Res (VBool b) TBool (V_Bool b) 
- 
-eval_safe _ _ (EInt n) _ (E_Int {}) _ 
-  = R_Res (VInt n) TInt (V_Int n) 
+eval_safe _ _ (EBool b) _ (E_Bool {}) _
+  = R_Res (VBool b) TBool (V_Bool b)
+
+eval_safe _ _ (EInt n) _ (E_Int {}) _
+  = R_Res (VInt n) TInt (V_Int n)
 
 eval_safe g s (EBin o e1 e2) t (E_Bin _ _ _ _ et1 et2) gs
-  = evalOp_res_safe o (eval s e1) (eval s e2) rt1 rt2     
-  where 
+  = evalOp_res_safe o (eval s e1) (eval s e2) rt1 rt2
+  where
     rt1          = eval_safe g s e1 (opIn o) et1 gs
     rt2          = eval_safe g s e2 (opIn o) et2 gs
 
-eval_safe g s (EVar x) t (E_Var {}) gs     
-  = R_Res w t wt 
-  where 
-    (w, (_, wt)) = lookup_safe g s x t gs 
+eval_safe g s (EVar x) t (E_Var {}) gs
+  = R_Res w t wt
+  where
+    (w, (_, wt)) = lookup_safe g s x t gs
 
-eval_safe g s (EFun f x t1 t2 e) t (E_Fun _ _ _ _ _ _ et2) gs 
+eval_safe g s (EFun f x t1 t2 e) t (E_Fun _ _ _ _ _ _ et2) gs
   = R_Res (VClos f x e s) t (V_Clos g s f x t1 t2 e gs et2)
 
 eval_safe g s (EForall x e) tp@(TForall _ t) (E_Forall _ _ _ _ et) gs
@@ -1158,11 +1234,11 @@ eval_safe g s (EForall x e) tp@(TForall _ t) (E_Forall _ _ _ _ et) gs
 
 eval_safe _ _ (EForall _ _) _ (E_Forall _ _ _ _ _) _
   = trivial ()
-      
-eval_safe g s (EApp e1 e2) t2 (E_App _ _ _ t1 _ e1_t1_t2 e2_t1) gs 
-  = evalApp_res_safe (eval s e1) (eval s e2) t1 t2 r1_t1_t2 r2_t1 
-  where 
-    r1_t1_t2 = eval_safe g s e1 (TFun t1 t2) e1_t1_t2 gs 
+
+eval_safe g s (EApp e1 e2) t2 (E_App _ _ _ t1 _ e1_t1_t2 e2_t1) gs
+  = evalApp_res_safe (eval s e1) (eval s e2) t1 t2 r1_t1_t2 r2_t1
+  where
+    r1_t1_t2 = eval_safe g s e1 (TFun t1 t2) e1_t1_t2 gs
     r2_t1    = eval_safe g s e2 t1           e2_t1    gs
 
 eval_safe g s (EPair e1 e2) t (E_Pair _ _ _ _ _ e1_t1 e2_t2) gs
@@ -1222,7 +1298,7 @@ test_forall_2 = eval_safe g s e t e_t gs
     f = "f"
     eVar = EVar v_x
     tVar = TVar t_x
-    eVar_tVar = E_Var (TBind v_x tVar (TBind f (TFun tVar tVar) g')) v_x tVar 
+    eVar_tVar = E_Var (TBind v_x tVar (TBind f (TFun tVar tVar) g')) v_x tVar
     eInner = EFun f v_x tVar tVar eVar
     tInner = TFun tVar tVar
     g' = TTVarBind t_x g
@@ -1257,7 +1333,7 @@ test_tapp_2 = eval_safe g s e t e_t gs
     f = "f"
     eVar = EVar v_x
     tVar = TVar t_x
-    eVar_tVar = E_Var (TBind v_x tVar (TBind f (TFun tVar tVar) g')) v_x tVar 
+    eVar_tVar = E_Var (TBind v_x tVar (TBind f (TFun tVar tVar) g')) v_x tVar
     eInner = EFun f v_x tVar tVar eVar
     tInner = TFun tVar tVar
     g' = TTVarBind t_x g
@@ -1272,16 +1348,21 @@ test_tapp_2 = eval_safe g s e t e_t gs
 
 main :: IO ()
 main = do
-  putStrLn . printer $ test_tapp_1
-  putStrLn . printer $ test_tapp_2
+  run $ EUBool False
+  run $ EUFun "f" "x" (EUBool True)
+  run $ EUApp (EUFun "f" "x" (EUVar "x")) (EUBool True)
   where
-    printer resTy = case resTy of
-      R_Res val ty valTy -> "val: " ++ show val ++ " type: " ++ show ty
-      R_Time ty -> "timeout, type: " ++ show ty
+    run = print . runGenConstraints . genConstraints
+  -- putStrLn . printer $ test_tapp_1
+  -- putStrLn . printer $ test_tapp_2
+  -- where
+  --   printer resTy = case resTy of
+  --     R_Res val ty valTy -> "val: " ++ show val ++ " type: " ++ show ty
+  --     R_Time ty -> "timeout, type: " ++ show ty
 
 
 --------------------------------------------------------------------------------
--- | Boilerplate 
+-- | Boilerplate
 --------------------------------------------------------------------------------
 
 {-@ measure prop :: a -> b           @-}
@@ -1289,4 +1370,4 @@ main = do
 
 {-@ trivial :: {v:a | false} -> b @-}
 trivial :: a -> b
-trivial x = trivial x  
+trivial x = trivial x
