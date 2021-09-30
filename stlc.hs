@@ -27,6 +27,11 @@
 module STLC where
 
 -- import Language.Haskell.Liquid.Equational
+import Data.Set (Set(..))
+import qualified Data.Set as S
+import Data.Map (Map(..))
+import qualified Data.Map as M
+import Data.Bifunctor (bimap)
 import Control.Monad.Trans.RWS.Lazy
 import Control.Monad.Trans.Class (lift)
 
@@ -205,48 +210,153 @@ substTVarExpr x tSub e = case e of
   ETApp eInner t      -> ETApp (substTVarExpr x tSub eInner) (substTVar x tSub t)
 
 -- | Inference
-
 -- Constraint-based inference taken from http://dev.stephendiehl.com/fun/006_hindley_milner.html
+
+-- Constraint generation
 type Constraint = (Type, Type)
 type VarCount = Int
-type InferM a = RWST TStore [Constraint] VarCount Maybe a
+-- type InferM a = RWST TStore [Constraint] VarCount (Either String) a
+data InferState = InferState
+  { tStore :: TStore
+  , constraints :: [Constraint]
+  -- Count in unary because of GHC issues
+  , varCount :: String 
+  }
 
-lookupTStore :: Var -> TStore -> Maybe Type
-lookupTStore x TSEmp = Nothing
+-- liquidhaskell can't find ++ so I guess we'll roll our own
+{-@ reflect append @-}
+append :: [a] -> [a] -> [a]
+append [] bs = bs
+append (a:as) bs = a : (append as bs)
+
+-- same with map
+{-@ reflect myMap @-}
+myMap :: (a -> b) -> [a] -> [b]
+myMap _ [] = []
+myMap f (a:as) = f a : myMap f as
+
+-- same with bimap
+{-@ reflect myBimap @-}
+myBimap :: (a -> b) -> (c -> d) -> (a, c) -> (b, d)
+myBimap f g (x, y) = (f x, g y)
+
+{-@ reflect lookupTStore @-}
+lookupTStore :: Var -> TStore -> Either String Type
+lookupTStore x TSEmp = Left "lookupTStore: lookup failed"
 lookupTStore x (TSBind v t ts)
-  | x == v    = Just t
+  | x == v    = Right t
   | otherwise = lookupTStore x ts
 
-freshTVar :: InferM Type
-freshTVar = do
-  varCount <- get
-  modify (+1)
-  return $ TVar ("tv" ++ show varCount)
+{-@ reflect freshTVar @-}
+freshTVar :: InferState -> (InferState, Type)
+freshTVar (InferState env consts varCount) = 
+  (InferState env consts (varCount `append` varCount), TVar varCount)
 
-unify :: Type -> Type -> InferM ()
-unify t1 t2 = tell [(t1, t2)]
+{-@ reflect makeConstraint @-}
+makeConstraint :: InferState -> Type -> Type -> InferState
+makeConstraint (InferState env consts varCount) t1 t2 = 
+  InferState env ((t1, t2):consts) varCount
 
-overExtendedEnv :: Var -> Type -> InferM a -> InferM a
-overExtendedEnv x t m = local (TSBind x t) m
+{-@ reflect genConstraints @-}
+genConstraints :: InferState -> ExprU -> Either String (InferState, Type)
+genConstraints is (EUBool _b) = Right (is, TBool)
+genConstraints is@(InferState env _ _) (EUVar v) = case lookupTStore v env of
+  Right tp -> Right (is, tp)
+  Left err -> Left err
+genConstraints is0 (EUFun f x eu) = case genConstraints is2 eu of
+  Right (InferState _ newConsts newVc, tp) ->
+    Right (InferState originalEnv newConsts newVc, TFun tv tp)
+  Left err -> Left err
+  where
+    (InferState originalEnv consts vc, tv) = freshTVar is0
+    is2 = InferState (TSBind x tv originalEnv) consts vc
+genConstraints is0 (EUApp e1 e2) = case genConstraints is0 e1 of
+  Right (is1, t1) -> case genConstraints is1 e2 of
+    Right (is2, t2) ->
+      let (is3, tv) = freshTVar is2
+          is4 = makeConstraint is3 t1 (TFun t2 tv) in
+        Right (is4, tv)
+    Left err -> Left err
+  Left err -> Left err
 
-genConstraints :: ExprU -> InferM Type
-genConstraints (EUBool _b) = return TBool
-genConstraints (EUVar v) = do 
-  env <- ask
-  lift $ lookupTStore v env
-genConstraints (EUFun f x eu) = do
-  tv <- freshTVar
-  tp <- overExtendedEnv x tv (genConstraints eu)
-  return $ TFun tv tp
-genConstraints (EUApp e1 e2) = do
-  t1 <- genConstraints e1
-  t2 <- genConstraints e2
-  tv <- freshTVar
-  unify t1 (TFun t2 tv)
-  return tv
+-- Constraint solving
+data Subst
+  = SEmp
+  | SBind TVar Type Subst
+type SolveM a = Either String a
 
-runGenConstraints :: InferM a -> Maybe (a, [Constraint])
-runGenConstraints m = evalRWST m TSEmp 0
+{-@ reflect mapSubst @-}
+mapSubst :: (Type -> Type) -> Subst -> Subst
+mapSubst f SEmp = SEmp
+mapSubst f (SBind tv tp subst) = SBind tv (f tp) (mapSubst f subst)
+
+{-@ reflect findWithDefaultSubst @-}
+findWithDefaultSubst :: Type -> TVar -> Subst -> Type
+findWithDefaultSubst def _ SEmp = def
+findWithDefaultSubst def searchTv (SBind tv tp subst)
+  | searchTv == tv = tp
+  | otherwise      = findWithDefaultSubst def searchTv subst
+
+{-@ reflect insertSubst @-}
+insertSubst :: TVar -> Type -> Subst -> Subst
+insertSubst tv tp SEmp = SBind tv tp SEmp
+insertSubst tv tp (SBind tv' tp' subst)
+  | tv == tv' = SBind tv tp (insertSubst tv tp subst)
+  | otherwise = SBind tv' tp' (insertSubst tv tp subst)
+
+{-@ reflect unionSubst @-}
+unionSubst :: Subst -> Subst -> Subst
+unionSubst SEmp s = s
+unionSubst (SBind tv tp subst) s = unionSubst subst (insertSubst tv tp s)
+
+{-@ reflect composeSubst @-}
+composeSubst :: Subst -> Subst -> Subst
+composeSubst s1 s2 = unionSubst (mapSubst (applySubst s1) s2) s1
+
+{-@ reflect applySubst @-}
+applySubst :: Subst -> Type -> Type
+applySubst s t@(TVar tv) = findWithDefaultSubst t tv s
+applySubst s t@TBool = t
+applySubst s (TFun t1 t2) = TFun (applySubst s t1) (applySubst s t2)
+-- TODO: left empty for totality, fill in with other cases
+applySubst s t = t
+
+{-@ reflect bind @-}
+bind ::  TVar -> Type -> SolveM (Subst, [Constraint])
+bind tv t | t == TVar tv = Right (SEmp, []) 
+          | tv `S.member` freeTVars t = Left "occurs check failed"
+          | otherwise = Right (SBind tv t SEmp, [])
+
+{-@ reflect freeTVars @-}
+freeTVars :: Type -> Set TVar
+freeTVars (TVar tv) = S.singleton tv
+freeTVars (TFun t1 t2) = freeTVars t1 `S.union` freeTVars t2
+freeTVars (TBool) = S.empty
+freeTVars (TInt) = S.empty
+-- TODO: left empty for totality, fill in with other cases
+freeTVars _ S.empty
+
+{-@ reflect unify @-}
+unify :: Type -> Type -> SolveM (Subst, [Constraint])
+unify t1 t2
+  | t1 == t2 = Right (SEmp, [])
+unify (TVar tv) t2 = bind tv t2
+unify t1 (TVar tv) = bind tv t1
+unify (TFun a1 a2) (TFun b1 b2) = case unify a1 b1 of
+  Right (s1, cs1) -> case unify (applySubst s1 a2) (applySubst s1 b2) of
+    Right (s2, cs2) ->
+      Right (composeSubst s1 s2, cs1 `append` cs2)
+    Left err -> Left err
+  Left err -> Left err
+unify _ _ = Left "unification failed"
+
+{-@ reflect solveConstraints @-}
+solveConstraints :: Subst -> [Constraint] -> SolveM Subst
+solveConstraints s [] = Right s
+solveConstraints s0 ((t1,t2):cs0) = case unify t1 t2 of
+  Right (s1, cs1) ->
+    solveConstraints (composeSubst s1 s0) (cs1 `append` myMap (myBimap (applySubst s1) (applySubst s1)) cs0)
+  Left err -> Left err
 
 -- TODO: Fix the names for annotate and infer (they are sort of switched)
 -- Possible method of writing inference:
@@ -256,25 +366,32 @@ runGenConstraints m = evalRWST m TSEmp 0
 --  4. Substitute the type variables
 -- Test with simple untyped expressions (e.g. Bool & Pair)
 -- Write a lemma for each (?)
-infer :: TStore -> TEnv -> ExprU -> Maybe Expr
-infer = undefined -- TODO
 
-{-@ annotationProof :: eu:ExprU 
-      -> st:TStore
-      -> g:TEnv
-      -> e:Expr 
-      -> t:Type
-      -> {infer st g eu == Just e}
-      -> {erase e == eu}
-      -> {readType e == Just t}
-      -> Prop (ExprTy g e t)
-  @-}
+{-@ reflect infer @-}
+infer :: TStore -> ExprU -> Either String Type
+infer ts eu = case genConstraints (InferState ts [] "0") eu of
+  Right (InferState _ constraints _, tUnsolved) -> case solveConstraints SEmp constraints of
+    Right subst ->
+      Right (applySubst subst tUnsolved)
+    Left err -> Left err
+  Left err -> Left err
+
+-- {-@ annotationProof :: eu:ExprU 
+--       -> st:TStore
+--       -> g:TEnv
+--       -> e:Expr 
+--       -> t:Type
+--       -> p1:{infer st g eu == Just e}
+--       -> p2:{erase e == eu}
+--       -> p3:{readType e == Just t}
+--       -> Prop (ExprTy g e t)
+--   @-}
 annotationProof = undefined
 
-{-@ erasure ::
-     -> {annotate st g eu == Just e}
-     -> {erase e == eu}
-  @-}
+-- {-@ erasure ::
+--      -> {annotate st g eu == Just e}
+--      -> {erase e == eu}
+--   @-}
 erasure = undefined
 
 data TResult
@@ -1351,8 +1468,11 @@ main = do
   run $ EUBool False
   run $ EUFun "f" "x" (EUBool True)
   run $ EUApp (EUFun "f" "x" (EUVar "x")) (EUBool True)
+  run $ EUFun "f" "x" (EUApp (EUVar "x") (EUVar "x"))
+  run $ EUApp (EUFun "f" "x" (EUVar "x")) (EUFun "g" "y" (EUVar "y"))
+  run $ EUFun "_" "f" (EUFun "_" "g" (EUFun "_" "x" (EUApp (EUApp (EUVar "f") (EUVar "x")) (EUApp (EUVar "g") (EUVar "x")))))
   where
-    run = print . runGenConstraints . genConstraints
+    run = print . infer TSEmp
   -- putStrLn . printer $ test_tapp_1
   -- putStrLn . printer $ test_tapp_2
   -- where
