@@ -1,0 +1,325 @@
+\documentclass{article}
+
+% \prooftree and related commands
+\usepackage{ebproof}
+% most symbols
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+% \RHD
+\usepackage[nointegrals]{wasysym}
+\usepackage{xcolor}
+
+\newcommand{\ignore}[1]{}
+\newcommand{\todo}[1]{\colorbox{red}{#1}}
+\newcommand{\consider}[1]{\colorbox{red}{!!!} #1 \colorbox{red}{!!!}}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+
+\newcommand{\define}{::=}
+\newcommand{\G}{\Gamma}
+\newcommand{\St}{\mathcal{S}}
+\newcommand{\unit}{\mathbf{1}}
+\newcommand{\tp}{t}
+\newcommand{\tarr}{t_{\text{arr}}}
+\newcommand{\targ}{t_{\text{arg}}}
+\newcommand{\tret}{t_{\text{ret}}}
+\newcommand{\uv}{u}
+\newcommand{\eu}{eu}
+\newcommand{\e}{e}
+\newcommand{\x}{x}
+\newcommand{\var}{v}
+
+\newcommand{\nil}{\cdot}
+\newcommand{\spc}{\qquad}
+\newcommand{\eq}{==}
+\renewcommand{\implies}{\Rightarrow}
+\newcommand{\fresh}{\text{Fresh}\ }
+
+\newcommand{\set}[2]{{#1} = {#2}}
+\newcommand{\withtp}[2]{{#1} \,:\, {#2}}
+\newcommand{\app}[2]{{#1}\ {#2}}
+\newcommand{\lam}[2]{\lambda {#1} \,.\, {#2}}
+\newcommand{\lamtp}[3]{\lambda \left( {\withtp {#1} {#2}} \right) \,.\, {#3}}
+\newcommand{\arr}[2]{{#1} \to {#2}}
+
+\newcommand{\hastp}[3]{#1 \vdash {\withtp {#2} {#3}}}
+\newcommand{\algtp}[6]{#1, #2 \vdash #3 \implies {\withtp {#4} {#5}} \dashv #6}
+\newcommand{\equals}[4]{{#1} \vdash {#2} \eq {#3} \dashv {#4}}
+\newcommand{\apply}[1]{\left[{#1}\right]}
+
+\newcommand{\deduct}[3][]
+{
+  \begin{prooftree}
+    \hypo{#2}
+    \infer1[\text{#1}]{#3}
+  \end{prooftree}
+}
+
+\begin{document}
+
+\section{Grammar}
+
+\subsection{Untyped Expressions}
+\[
+  \begin{array}{rcll}
+    \eu & \define & \unit & \text{Unit} \\
+        & \mid    & \var  & \text{Var}  \\
+        & \mid    & \lam \x \eu & \text{Lambda} \\
+        & \mid    & \app {\eu_1} {\eu_2} & \text{App}
+  \end{array}
+\]
+
+\subsection{Typed Expressions}
+\[
+  \begin{array}{rcll}
+    \e  & \define & \unit & \text{Unit} \\
+        & \mid    & \var  & \text{Var}  \\
+        & \mid    & \lamtp \x \tp \e & \text{Lambda} \\
+        & \mid    & \app {\e_1} {\e_2} & \text{App}
+  \end{array}
+\]
+
+\subsection{Types}
+\[
+  \begin{array}{rcll}
+    \tp & \define & \unit & \text{Unit} \\
+        & \mid    & \arr {\tp_1} {\tp_2}    & \text{Arrow}  \\
+        & \mid    & \uv & \text{UVar} \\
+  \end{array}
+\]
+
+\subsection{Typing Evironments}
+\[
+  \begin{array}{rcll}
+    \G  & \define & \nil & \text{Empty} \\
+        & \mid    & \G , {\withtp \var \tp} & \text{Var with Type}  \\
+  \end{array}
+\]
+
+\subsection{Type Stores}
+\[
+  \begin{array}{rcll}
+    \St  & \define & \nil & \text{Empty} \\
+         & \mid    & \St , {\set \uv \tp} & \text{UVar with Type}  \\
+  \end{array}
+\]
+
+\section{Typing}
+
+\subsection{Declarative Typing}
+
+Judgements of the form:
+
+\[ \hastp \G \e \tp \]
+
+\[
+\deduct
+  {}
+  {\hastp \G \unit \unit}
+  {\text{(DeclUnit)}}
+\spc
+\deduct
+  {\G(\var) = \tp}
+  {\hastp \G \var \tp}
+  {\text{(Var)}}
+\]
+
+\[
+  \deduct
+  {\hastp {\G, {\withtp \x {\tp_1}}} \e {\tp_2}}
+  {\hastp \G {\lamtp {\x} {\tp_2} {\e}} {\arr {\tp_1} {\tp_2}}}
+  {\text{(Lambda)}}
+\]
+
+\[
+  \deduct
+  {\hastp \G {\e_1} {\arr {\tp_1} {\tp_2}} \spc 
+   \hastp \G {\e_2} {\tp_2}}
+  {\hastp \G {\app {\e_1} {\e_2}} {\tp_2}}
+  {\text{(App)}}
+\]
+
+\subsection{Algorithmic Typing}
+
+Jugements of the form:
+
+\[ \algtp \G \St \eu \e \tp \St' \]
+
+\[
+  \deduct
+  {}
+  {\algtp \G \St \unit \unit \unit \St}
+  {\text{(Unit)}}
+  \spc
+  \deduct
+  {\G(\var) = \tp}
+  {\algtp \G \St \var \var \tp \St}
+  {\text{(Var)}}
+\]
+
+\[
+  \deduct
+  {\begin{array}{c}
+    \fresh \uv \spc \spc
+   \algtp \G {\St_0} {\eu_1} {\e_1} \tarr {\St_1} \\
+   \algtp \G {\St_1} {\eu_2} {\e_2} \targ {\St_2} \spc
+   \equals {\St_2} {\tarr} {\arr {\targ} \uv} {\St_3}
+   \end{array}
+  }
+  {\algtp \G {\St_0} {\app {\eu_1} {\eu_2}} {\app {\e_1} {\e_2}} {\uv} {\St_3}}
+  {\text{(App)}}
+\]
+
+\[
+  \deduct
+  {
+    \begin{array}{c}
+      \fresh \uv_1, \uv_2 \spc
+      \algtp {\G, \withtp \x {\uv_1}} {\St_0} \eu \e \tret {\St_1} \\
+      \equals {\St_1} \tret {\uv_2} {\St_2}
+    \end{array}
+  }
+  {\algtp \G {\St_0} {\lam \x \eu} {\lamtp \x {\uv_1} \e} {\arr {\uv_1} {\uv_2}} {\St_2}}
+  {\text{(Arr)}}
+\]
+
+Judgements of the form:
+
+\[ \equals {\St_0} {\tp_1} {\tp_2} {\St_1} \]
+
+\[
+  \deduct
+  {}
+  {\equals \St \tp \tp \St}
+  {\text{(Base Eq)}}
+  \spc
+  \deduct
+  {\equals {\St_0} {\tp_1} {\tp_3} {\St_1} \spc
+   \equals {\St_1} {\tp_2} {\tp_4} {\St_2}}
+  {\equals {\St_0} {\arr {\tp_1} {\tp_2}} {\arr {\tp_3} {\tp_4}} {\St_2}}
+  {\text{(Arr Eq)}}
+\]
+
+\[
+  \deduct
+  {\uv \notin \tp \spc \uv \notin \St}
+  {\equals \St \uv \tp {\St, \uv = \tp}}
+  {\text{(UVar Left Eq)}}
+  \spc
+  \deduct
+  {\uv \notin \tp \spc \uv \notin \St}
+  {\equals \St \tp \uv {\St, \uv = \tp}}
+  {\text{(UVar Right Eq)}}
+\]
+
+\section{Theorems}
+
+\begin{lemma}[Equality]
+  If there exists a judgement
+  \[ \equals \St {\tp_1} {\tp_2} {\St'},\]
+  then under context \(\St'\), the types \(\tp_1\) and \(\tp_2\) are equal.
+\end{lemma}
+
+\begin{proof}
+  TBD
+\end{proof}
+
+\begin{theorem}[Soundness]
+  If there exists an algorithmic judgement
+\[ \algtp \G \St \eu \e \tp \St' \]
+  then we may derive a dedclarative judgement
+\[ \hastp {\St(\G)} {\St(\e)} {\St(t)}.\]
+\end{theorem}
+
+\begin{proof}
+  The proof is by induction over the expressions.
+
+  The base cases for the rules Unit and Var are trivial.
+
+  For App, we start with the given judgement:
+
+\[
+  \deduct
+  {\begin{array}{c}
+    \fresh \uv \spc \spc
+   \algtp \G {\St_0} {\eu_1} {\e_1} \tarr {\St_1} \\
+   \algtp \G {\St_1} {\eu_2} {\e_2} \targ {\St_2} \spc
+   \equals {\St_2} {\tarr} {\arr {\targ} \uv} {\St_3}
+   \end{array}
+  }
+  {\algtp \G {\St_0} {\app {\eu_1} {\eu_2}} {\app {\e_1} {\e_2}} {\uv} {\St_3}}
+  {\text{(App)}}
+\]
+
+  Let \(\St\) be \(\St_3\) for brevity.
+  
+  By induction, we know that there are declarative judgements
+  \[ \hastp {\St(\G)} {\St(\e_1)} {\St(\tarr)} \]
+  and
+  \[ \hastp {\St(\G)} {\St(\e_2)} {\St(\targ)}.\]
+
+  By the equality lemma, we know that \(\tarr = \arr \targ \uv\), so we may
+  substitute for it:
+
+  \[ \hastp {\St(\G)} {\St(\e_1)} {\St(\arr \targ \uv)}.\]
+
+  By property of substitution, we get
+
+  \[ \hastp {\St(\G)} {\St(\e_1)} {\arr {\St(\targ)} {\St(\uv)}}.\]
+
+  Thus we may construct the declarative judgement
+  
+  \[
+    \deduct
+    {\hastp {\St(\G)} {\St(\e_1)} {\arr {\St(\targ)} {\St(\uv)}} \spc
+     \hastp {\St(\G)} {\St(\e_2)} {\St(\targ)}
+    }
+    {\hastp {\St(\G)} {\app {\St(\e_1)} {\St(\e_2)}} {\St(\uv)}}
+    {}
+  \]
+
+  By property of substitution, we know that \(\app {\St(\e_1)} {\St(\e_2)}\) is
+  the same as \(\St(\app {\e_1} {\e_2})\), which gives the desired.
+
+  For Arr, we start with the given judgement:
+
+\[
+  \deduct
+  {
+    \begin{array}{c}
+      \fresh \uv_1, \uv_2 \spc
+      \algtp {\G, \withtp \x {\uv_1}} {\St_0} \eu \e \tret {\St_1} \\
+      \equals {\St_1} \tret {\uv_2} {\St_2}
+    \end{array}
+  }
+  {\algtp \G {\St_0} {\lam \x \eu} {\lamtp \x {\uv_1} \e} {\arr {\uv_1} {\uv_2}} {\St_2}}
+  {\text{(Arr)}}
+\]
+
+  Let \(\St\) be \(\St_2\) for brevity.
+
+  By induction, we can conclude that there exists the declarative judgement
+
+  \[ \hastp {\St(\G), \withtp \x {\St(\uv_1)}} {\St(\e)} {\St(\tret)}.\]
+
+  By the equality lemma, we may substitute \(\uv_2\) for \(\tret\), giving
+
+  \[ \hastp {\St(\G), \withtp \x {\St(\uv_1)}} {\St(\e)} {\St(\uv_2)}.\]
+
+  From this, we may derive the declarative judgement
+
+  \[
+    \deduct
+    {\hastp {\St(\G), \withtp \x {\St(\uv_1)}} {\St(\e)} {\St(\uv_2)}}
+    {\hastp {\St(\G)} {\lam \x {\St(\e)}} {\arr {\St(\uv_1)} {\St(\uv_2)}}}
+  \]
+  
+  By the property of substitution, we know that \({\arr {\St(\uv_1)}
+  {\St(\uv_2}}\) is the same as \(\St(\arr {\uv_1} {\uv_2})\), which gives
+  the desired.
+
+\end{proof}
+
+\end{document}
