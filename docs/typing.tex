@@ -123,22 +123,85 @@ Judgements of the form:
 \deduct
   {\G(\var) = \tp}
   {\hastp \G \var \tp}
-  {\text{(Var)}}
+  {\text{(DeclVar)}}
 \]
 
 \[
   \deduct
   {\hastp {\G, {\withtp \x {\tp_1}}} \e {\tp_2}}
-  {\hastp \G {\lamtp {\x} {\tp_2} {\e}} {\arr {\tp_1} {\tp_2}}}
-  {\text{(Lambda)}}
+  {\hastp \G {\lamtp {\x} {\tp_1} {\e}} {\arr {\tp_1} {\tp_2}}}
+  {\text{(DeclLam)}}
 \]
 
 \[
   \deduct
   {\hastp \G {\e_1} {\arr {\tp_1} {\tp_2}} \spc 
-   \hastp \G {\e_2} {\tp_2}}
+   \hastp \G {\e_2} {\tp_1}}
   {\hastp \G {\app {\e_1} {\e_2}} {\tp_2}}
-  {\text{(App)}}
+  {\text{(DeclApp)}}
+\]
+
+\subsection{Type stores}
+
+We define the relation \(\St_1 \subseteq \St_2\), which states informally that
+\(\St_1\) is a prefix of \(\St_2\). The Nil rule is not strictly needed.
+
+\[
+  \deduct
+  {}
+  {\nil \subseteq \St}
+  {\text{(Nil)}}
+  \spc
+  \deduct
+  {}
+  {\St \subseteq \St}
+  {\text{(Refl)}}
+  \spc
+  \deduct
+  {\St_1 \subseteq \St_2}
+  {\St_1 \subseteq \St_2, \uv = \tp}
+  {\text{(Extension)}}
+\]
+
+It follows from the definition that the transitive propery holds for
+\(\subseteq\).
+
+We define applying a type store \(\St\) over type contexts, types,
+and typed expressions.
+
+For contexts \(\G\),
+\[
+  \begin{array}{rcll}
+    \St(\nil) & \define & \nil & \text{Empty} \\
+    \St(\G, {\withtp \var \tp}) & \define & \St(\G), {\withtp \var {\St(\tp)}} &
+    \text{Var with Type}
+  \end{array}
+\]
+
+For types \(\tp\),
+\[
+  \begin{array}{rcll}
+    \St(\unit) & \define & \unit & \text{Unit} \\
+    \St(\arr {\tp_1} {\tp_2}) & \define   & \arr {\St(\tp_1)} {\St(\tp_2)} & \text{Arrow}  \\
+    \left( \St, {\uv_1} = \tp \right)({\uv_2}) & \define & \begin{cases}
+    \St({\uv_2}) & {\uv_1} \ne {\uv_2} \\ \St(\tp) & {\uv_1} = {\uv_2}
+    \end{cases} & \text{UVar} \\
+    \nil(\tp) & \define & \tp & \text{Empty} \\
+  \end{array}
+\]
+
+Note: though it is assumed that no UVar occurs twice in \(\St\), in the case of
+multiple UVars, the first appearing one is used (from left to right, i.e. first-defined
+UVar).
+
+For typed expressions \(\e\),
+\[
+  \begin{array}{rcll}
+    \St(\unit)  & \define & \unit & \text{Unit} \\
+    \St(\var) & \define   & \var  & \text{Var}  \\
+    \St(\lamtp \x \tp \e) & \define    & \lamtp \x {\St(\tp)} {\St(\e)} & \text{Lambda} \\
+    \St(\app {\e_1} {\e_2}) & \define    & \app {\St(\e_1)} {\St(\e_2)} & \text{App}
+  \end{array}
 \]
 
 \subsection{Algorithmic Typing}
@@ -175,13 +238,10 @@ Jugements of the form:
 \[
   \deduct
   {
-    \begin{array}{c}
-      \fresh \uv_1, \uv_2 \spc
-      \algtp {\G, \withtp \x {\uv_1}} {\St_0} \eu \e \tret {\St_1} \\
-      \equals {\St_1} \tret {\uv_2} {\St_2}
-    \end{array}
+    \fresh \uv \spc
+    \algtp {\G, \withtp \x {\uv}} {\St_0} \eu \e \tret {\St_1}
   }
-  {\algtp \G {\St_0} {\lam \x \eu} {\lamtp \x {\uv_1} \e} {\arr {\uv_1} {\uv_2}} {\St_2}}
+  {\algtp \G {\St_0} {\lam \x \eu} {\lamtp \x {\uv} \e} {\arr {\uv} {\tret}} {\St_1}}
   {\text{(Arr)}}
 \]
 
@@ -226,11 +286,220 @@ Judgements of the form:
   TBD
 \end{proof}
 
+\begin{lemma}[Inversion (Decl)]
+  If there exists a judgement
+  \[ \hastp \G \e \tp,\]
+  we may deduce what its derivation is unambiguously from the form of
+  its expression \(\e\).
+\end{lemma}
+
+\begin{proof}
+  Follows from the definition.
+\end{proof}
+
+\begin{lemma}[Inversion (Algorithmic)]
+  If there exists a judgement
+  \[ \algtp \G \St \eu \e \tp \St',\]
+  we may deduce what its derivation is unambiguously from the form of
+  its expression \(\eu\).
+\end{lemma}
+
+\begin{proof}
+  Follows from the definition.
+\end{proof}
+
+\begin{lemma}[Extension 1]
+  If there exists an equality judgement
+  \[ \equals {\St_0} {\tp_1} {\tp_2} {\St_1}, \]
+  then \(\St_0 \subseteq \St_1\).
+\end{lemma}
+
+\begin{proof}
+  We prove this by induction over the judgements.
+
+  The Base Eq judgement is one of our base cases, and is satisfied by the Refl
+  rule of \(\subseteq\). The other two base cases are UVar Left Eq and UVar
+  Right Eq, which are satisfied by the Extension rule of \(\subseteq\).
+  Informally, we know that \(\St \subseteq \St, \uv = \tp\) because the left is
+  a strict prefix of the right and \(\St_0 \subseteq \St_1\) means \(\St_0\) is
+  a prefix of \(\St_1\).
+
+  The one recursive case is the Arr Eq judgement, reproduced below.
+  \[
+  \deduct
+  {\equals {\St_0} {\tp_1} {\tp_3} {\St_1} \spc
+   \equals {\St_1} {\tp_2} {\tp_4} {\St_2}}
+  {\equals {\St_0} {\arr {\tp_1} {\tp_2}} {\arr {\tp_3} {\tp_4}} {\St_2}}
+  {\text{(Arr Eq)}}
+  \]
+
+  By inversion and the inductive hypothesis, \(\St_0 \subseteq \St_1\) and
+  \(\St_1 \subseteq \St_2\). Because \(\subseteq\) is transitive, we may
+  conclude that \(\St_0 \subseteq \St_2\), as desired.
+
+  By induction, this property holds for all judgements.
+\end{proof}
+
+\begin{lemma}[Extension 2]
+  If there exists an algorithmic judgement
+  \[ \algtp \G \St \eu \e \tp \St', \]
+  then \(\St \subseteq \St'\).
+\end{lemma}
+
+\begin{proof}
+  We prove this by induction over the judgements.
+
+  Rules Unit and Var constitute base cases, and we observe that the Refl rule of
+  \(\subseteq\) satisfies the lemma.
+
+  There are two recursive cases: App and Arr. For Arr, we observe that the
+  inductive hypothesis and inversion is sufficient to prove the lemma. For App,
+  reproduced below, we will have to do a little work, starting with inversion.
+
+  \[
+    \deduct
+    {\begin{array}{c}
+      \fresh \uv \spc \spc
+     \algtp \G {\St_0} {\eu_1} {\e_1} \tarr {\St_1} \\
+     \algtp \G {\St_1} {\eu_2} {\e_2} \targ {\St_2} \spc
+     \equals {\St_2} {\tarr} {\arr {\targ} \uv} {\St_3}
+     \end{array}
+    }
+    {\algtp \G {\St_0} {\app {\eu_1} {\eu_2}} {\app {\e_1} {\e_2}} {\uv} {\St_3}}
+    {\text{(App)}}
+  \]
+
+  We may apply the inductive hypothesis to conclude \(\St_0 \subseteq \St_1\)
+  and \(\St_1 \subseteq \St_2\). We may apply the Extension 1 lemma to conclude
+  \(\St_2 \subseteq \St_3\). By the transitive property, we may conclude \(\St_0
+  \subseteq \St_3\), as desired.
+
+  By induction, this property holds for all judgements.
+\end{proof}
+
+\begin{lemma}[Substitution]
+  If we have a judgement
+  \[\hastp \G \e \tp, \]
+  we may substitute every occurrence of the UVar \(\uv\) with \(\tp\) and produce a valid
+  judgement. Formally, we may derive the following judgement
+  \[\left( \hastp \G \e \tp \right)[\uv \mapsto \tp].\]
+\end{lemma}
+
+\begin{proof}
+  We observe that if \(\uv\) is not present in the judgement, the lemma holds
+  trivially. Likewise, if \(\uv\) is in \(\G\) but on an unused typing variable,
+  the lemma holds trivially. The rest of this proof will assume that \(\uv\)
+  exists somewhere other than the typing context.
+
+  We prove it by induction on judgements.
+
+  Starting with base cases (and looking at their derivations, by inversion),
+  DeclUnit holds as it is on a concrete type which may not be substituted. We
+  consider now the other base case: DeclVar, reproduced below.
+
+  \[
+    \deduct
+    {\G(\var) = \uv}
+    {\hastp \G \var \uv}
+    {\text{(DeclVar)}}
+  \]
+
+  Note that we specify that \(\G(\var) = \uv\), as the only meaningful place to
+  substitute for \(\uv\) would be if it were a part of the resulting type. In
+  this case, if we substitute \(\uv\) for \(\tp\) in \(\G\), it must be true
+  that \(\G(\var) = \tp\). From this, we may conclude that
+  \[ \hastp {\G[\uv \mapsto \tp]} {\var} {\tp}, \]
+  which is a less complex way of stating the desired (below).
+  \[ \hastp {\G[\uv \mapsto \tp]} {\var[\uv \mapsto \tp]} {\uv[\uv \mapsto \tp]} \]
+
+  Now for the recursive cases, DeclLam and DeclApp. We'll provide a thorough
+  derivation of DeclLam; DeclApp follows in a similar manner.  Suppose we have a
+  judgement of the form
+
+  \[\hastp \G {\lamtp {\x} {\tp_1} {\e}} {\arr {\tp_1} {\tp_2}}.\]
+
+  We'd like to know that substituting \(\tp\) for \(\uv\) in this judgement will
+  produce another valid judgement. By inversion, we know the following
+  derivation exists
+
+  \[
+  \deduct
+  {\hastp {\G, {\withtp \x {\tp_1}}} \e {\tp_2}}
+  {\hastp \G {\lamtp {\x} {\tp_1} {\e}} {\arr {\tp_1} {\tp_2}}}
+  {\text{(DeclLam)}}.
+  \]
+
+  By the inductive hypothesis, we know that
+
+  \[ \left(\hastp {\G, {\withtp \x {\tp_1}}} \e {\tp_2}\right)[\uv \mapsto \tp]. \]
+
+  If we apply the substitution, we get
+
+  \[ \hastp {\G[\uv \mapsto \tp], {\withtp \x {\tp_1[\uv \mapsto \tp]}}} {\e[\uv
+  \mapsto \tp]}{\tp_2[\uv \mapsto \tp]}.\]
+
+  We may apply the DeclLam rule to this judgement to obtain
+
+  \[
+    \deduct
+    {\hastp {\G[\uv \mapsto \tp], {\withtp \x {\tp_1[\uv \mapsto \tp]}}} {\e[\uv
+  \mapsto \tp]}{\tp_2[\uv \mapsto \tp]}}
+    {\hastp {\G[\uv \mapsto \tp]} {\lamtp {\x} {\tp_1[\uv \mapsto \tp]} {\e[\uv
+    \mapsto \tp]}} {\arr {\tp_1[\uv \mapsto \tp]} {\tp_2[\uv \mapsto \tp]}}}
+    {\text{(DeclLam)}}.
+  \]
+
+  Skipping a few steps, we see that the resulting judgement is the same as
+  \[ \left(\hastp \G {\lamtp {\x} {\tp_1} {\e}} {\arr {\tp_1}
+  {\tp_2}}\right)[\uv \mapsto \tp], \]
+  as desired.
+
+  DeclApp follows in a similar way, the general step being applying inversion,
+  then the inductive hypothesis, then re-deriving the desired judgement.
+
+  By induction, this lemma holds for all valid judgements.
+
+\end{proof}
+
+\begin{lemma}[Weakening]
+  If we have a judgement
+  \[\hastp {\St(\G)} {\St(\e)} {\St(\tp)}\]
+  and know that \(\St \subseteq \St'\), then we may conclude that
+  \[\hastp {\St'(\G)} {\St'(\e)} {\St'(\tp)}.\]
+\end{lemma}
+
+\begin{proof}
+  We prove this lemma by induction on \(\St'\).
+
+  We start with the base case where \(\St = \St'\), which trivially holds.
+
+  Now assume that the judgement holds for all \(\St'\) which are \(n\) elements
+  larger than \(\St\). Consider \(\St_{n+1}\), which is \(n+1\) elements larger
+  than \(\St\). We may assume that \(\St_{n+1} = \St_n, \uv = \tp\), where we
+  know by the inductive hypothesis that weakening holds for \(\St_n\), i.e.
+
+  \[\hastp {\St_n(\G)} {\St_n(\e)} {\St_n(\tp)}.\]
+
+  Our goal is to derive the same for \(\St_{n+1}\). We apply the Substitution
+  lemma using the above, \(\uv\), and \(\tp\), to derive
+
+  \[\left(\hastp {\St_n(\G)} {\St_n(\e)} {\St_n(\tp)}\right)[\uv \mapsto \tp].\]
+
+  Since applying a store is the same thing as substitution, we may rewrite the
+  above to the identical judgement
+
+  \[\hastp {(\St_n, \uv = \tp)(\G)} {(\St_n, \uv = \tp)(\e)} {(\St_n, \uv = \tp)(\tp)}.\]
+
+  \(\St_n, \uv = \tp = \St_{n+1}\), proving the inductive step.
+
+  By induction, this lemma holds for all \(\St' \supseteq \St\).
+\end{proof}
+
 \begin{theorem}[Soundness]
   If there exists an algorithmic judgement
 \[ \algtp \G \St \eu \e \tp \St' \]
   then we may derive a dedclarative judgement
-\[ \hastp {\St(\G)} {\St(\e)} {\St(t)}.\]
+\[ \hastp {\St'(\G)} {\St'(\e)} {\St'(t)}.\]
 \end{theorem}
 
 \begin{proof}
@@ -238,7 +507,7 @@ Judgements of the form:
 
   The base cases for the rules Unit and Var are trivial.
 
-  For App, we start with the given judgement:
+  For App, we start with the given judgement, by inversion:
 
 \[
   \deduct
@@ -253,71 +522,69 @@ Judgements of the form:
   {\text{(App)}}
 \]
 
-  Let \(\St\) be \(\St_3\) for brevity.
-  
+  For brevity, let \(\St' = \St_3\).
+
   By induction, we know that there are declarative judgements
-  \[ \hastp {\St(\G)} {\St(\e_1)} {\St(\tarr)} \]
+  \[ \hastp {\St_1(\G)} {\St_1(\e_1)} {\St_1(\tarr)} \]
   and
-  \[ \hastp {\St(\G)} {\St(\e_2)} {\St(\targ)}.\]
+  \[ \hastp {\St_2(\G)} {\St_2(\e_2)} {\St_2(\targ)}.\]
+
+  We may apply the weakening lemma to conclude 
+
+  \[ \hastp {\St'(\G)} {\St'(\e_1)} {\St'(\tarr)} \]
+  and
+  \[ \hastp {\St'(\G)} {\St'(\e_2)} {\St'(\targ)}.\]
 
   By the equality lemma, we know that \(\tarr = \arr \targ \uv\), so we may
   substitute for it:
 
-  \[ \hastp {\St(\G)} {\St(\e_1)} {\St(\arr \targ \uv)}.\]
+  \[ \hastp {\St'(\G)} {\St'(\e_1)} {\St'(\arr \targ \uv)}.\]
 
   By property of substitution, we get
 
-  \[ \hastp {\St(\G)} {\St(\e_1)} {\arr {\St(\targ)} {\St(\uv)}}.\]
+  \[ \hastp {\St'(\G)} {\St'(\e_1)} {\arr {\St'(\targ)} {\St'(\uv)}}.\]
 
   Thus we may construct the declarative judgement
   
   \[
     \deduct
-    {\hastp {\St(\G)} {\St(\e_1)} {\arr {\St(\targ)} {\St(\uv)}} \spc
-     \hastp {\St(\G)} {\St(\e_2)} {\St(\targ)}
+    {\hastp {\St'(\G)} {\St'(\e_1)} {\arr {\St'(\targ)} {\St'(\uv)}} \spc
+     \hastp {\St'(\G)} {\St'(\e_2)} {\St'(\targ)}
     }
-    {\hastp {\St(\G)} {\app {\St(\e_1)} {\St(\e_2)}} {\St(\uv)}}
+    {\hastp {\St'(\G)} {\app {\St'(\e_1)} {\St'(\e_2)}} {\St'(\uv)}}
     {}
   \]
 
-  By property of substitution, we know that \(\app {\St(\e_1)} {\St(\e_2)}\) is
-  the same as \(\St(\app {\e_1} {\e_2})\), which gives the desired.
+  By property of substitution, we know that \(\app {\St'(\e_1)} {\St'(\e_2)}\) is
+  the same as \(\St'(\app {\e_1} {\e_2})\), which gives the desired.
 
-  For Arr, we start with the given judgement:
+  For Arr, we start with the given judgement, again by inversion:
 
 \[
   \deduct
   {
-    \begin{array}{c}
-      \fresh \uv_1, \uv_2 \spc
-      \algtp {\G, \withtp \x {\uv_1}} {\St_0} \eu \e \tret {\St_1} \\
-      \equals {\St_1} \tret {\uv_2} {\St_2}
-    \end{array}
+    \algtp {\G, \withtp \x {\uv}} {\St_0} \eu \e \tret {\St_1}
   }
-  {\algtp \G {\St_0} {\lam \x \eu} {\lamtp \x {\uv_1} \e} {\arr {\uv_1} {\uv_2}} {\St_2}}
+  {\algtp \G {\St_0} {\lam \x \eu} {\lamtp \x {\uv} \e} {\arr {\uv} {\tret}} {\St_1}}
   {\text{(Arr)}}
 \]
 
-  Let \(\St\) be \(\St_2\) for brevity.
+  Let \(\St' = \St_1\) for brevity.
 
   By induction, we can conclude that there exists the declarative judgement
 
-  \[ \hastp {\St(\G), \withtp \x {\St(\uv_1)}} {\St(\e)} {\St(\tret)}.\]
-
-  By the equality lemma, we may substitute \(\uv_2\) for \(\tret\), giving
-
-  \[ \hastp {\St(\G), \withtp \x {\St(\uv_1)}} {\St(\e)} {\St(\uv_2)}.\]
+  \[ \hastp {\St'(\G), \withtp \x {\St'(\uv)}} {\St'(\e)} {\St'(\tret)}.\]
 
   From this, we may derive the declarative judgement
 
   \[
     \deduct
-    {\hastp {\St(\G), \withtp \x {\St(\uv_1)}} {\St(\e)} {\St(\uv_2)}}
-    {\hastp {\St(\G)} {\lam \x {\St(\e)}} {\arr {\St(\uv_1)} {\St(\uv_2)}}}
+    {\hastp {\St'(\G), \withtp \x {\St'(\uv)}} {\St'(\e)} {\St'(\tret)}}
+    {\hastp {\St'(\G)} {\lam \x {\St'(\e)}} {\arr {\St'(\uv)} {\St'(\tret)}}}
   \]
   
-  By the property of substitution, we know that \({\arr {\St(\uv_1)}
-  {\St(\uv_2}}\) is the same as \(\St(\arr {\uv_1} {\uv_2})\), which gives
+  By the property of substitution, we know that \({\arr {\St'(\uv)}
+  {\St'(\tret})}\) is the same as \(\St'(\arr {\uv} {\tret})\), which gives
   the desired.
 
 \end{proof}
