@@ -1,1 +1,4 @@
 .liquid
+*.hi
+*.o
+*.lock

@@ -287,7 +287,7 @@ Judgements of the form:
 \end{proof}
 
 \begin{lemma}[Inversion (Decl)]
-  If there exists a judgement
+  If
   \[ \hastp \G \e \tp,\]
   we may deduce what its derivation is unambiguously from the form of
   its expression \(\e\).
@@ -309,13 +309,13 @@ Judgements of the form:
 \end{proof}
 
 \begin{lemma}[Extension 1]
-  If there exists an equality judgement
+  If
   \[ \equals {\St_0} {\tp_1} {\tp_2} {\St_1}, \]
   then \(\St_0 \subseteq \St_1\).
 \end{lemma}
 
 \begin{proof}
-  We prove this by induction over the judgements.
+  We prove this by induction over the deductions.
 
   The Base Eq judgement is one of our base cases, and is satisfied by the Refl
   rule of \(\subseteq\). The other two base cases are UVar Left Eq and UVar
@@ -341,13 +341,13 @@ Judgements of the form:
 \end{proof}
 
 \begin{lemma}[Extension 2]
-  If there exists an algorithmic judgement
+  If
   \[ \algtp \G \St \eu \e \tp \St', \]
   then \(\St \subseteq \St'\).
 \end{lemma}
 
 \begin{proof}
-  We prove this by induction over the judgements.
+  We prove this by induction over the deductions.
 
   Rules Unit and Var constitute base cases, and we observe that the Refl rule of
   \(\subseteq\) satisfies the lemma.
@@ -378,7 +378,7 @@ Judgements of the form:
 \end{proof}
 
 \begin{lemma}[Substitution]
-  If we have a judgement
+  If
   \[\hastp \G \e \tp, \]
   we may substitute every occurrence of the UVar \(\uv\) with \(\tp\) and produce a valid
   judgement. Formally, we may derive the following judgement
@@ -462,7 +462,7 @@ Judgements of the form:
 \end{proof}
 
 \begin{lemma}[Weakening]
-  If we have a judgement
+  If
   \[\hastp {\St(\G)} {\St(\e)} {\St(\tp)}\]
   and know that \(\St \subseteq \St'\), then we may conclude that
   \[\hastp {\St'(\G)} {\St'(\e)} {\St'(\tp)}.\]
@@ -496,9 +496,9 @@ Judgements of the form:
 \end{proof}
 
 \begin{theorem}[Soundness]
-  If there exists an algorithmic judgement
+  If
 \[ \algtp \G \St \eu \e \tp \St' \]
-  then we may derive a dedclarative judgement
+  then we may derive a declarative judgement
 \[ \hastp {\St'(\G)} {\St'(\e)} {\St'(t)}.\]
 \end{theorem}
 
@@ -515,14 +515,12 @@ Judgements of the form:
     \fresh \uv \spc \spc
    \algtp \G {\St_0} {\eu_1} {\e_1} \tarr {\St_1} \\
    \algtp \G {\St_1} {\eu_2} {\e_2} \targ {\St_2} \spc
-   \equals {\St_2} {\tarr} {\arr {\targ} \uv} {\St_3}
+   \equals {\St_2} {\tarr} {\arr {\targ} \uv} {\St'}
    \end{array}
   }
-  {\algtp \G {\St_0} {\app {\eu_1} {\eu_2}} {\app {\e_1} {\e_2}} {\uv} {\St_3}}
+  {\algtp \G {\St_0} {\app {\eu_1} {\eu_2}} {\app {\e_1} {\e_2}} {\uv} {\St'}}
   {\text{(App)}}
 \]
-
-  For brevity, let \(\St' = \St_3\).
 
   By induction, we know that there are declarative judgements
   \[ \hastp {\St_1(\G)} {\St_1(\e_1)} {\St_1(\tarr)} \]
@@ -563,15 +561,14 @@ Judgements of the form:
 \[
   \deduct
   {
-    \algtp {\G, \withtp \x {\uv}} {\St_0} \eu \e \tret {\St_1}
+    \algtp {\G, \withtp \x {\uv}} {\St_0} \eu \e \tret {\St'}
   }
-  {\algtp \G {\St_0} {\lam \x \eu} {\lamtp \x {\uv} \e} {\arr {\uv} {\tret}} {\St_1}}
+  {\algtp \G {\St_0} {\lam \x \eu} {\lamtp \x {\uv} \e} {\arr {\uv} {\tret}}
+  {\St'}}
   {\text{(Arr)}}
 \]
 
-  Let \(\St' = \St_1\) for brevity.
-
-  By induction, we can conclude that there exists the declarative judgement
+  By induction, we can conclude that there exists a derivation for the declarative judgement
 
   \[ \hastp {\St'(\G), \withtp \x {\St'(\uv)}} {\St'(\e)} {\St'(\tret)}.\]
 
@@ -588,5 +585,24 @@ Judgements of the form:
   the desired.
 
 \end{proof}
+
+\section{To Do}
+
+- Replace subseteq with square subseteq (and supseteq)
+- Replace occurrences of substitution \([\uv \mapsto \tp]\) with a singleton
+type store of \(\nil, \uv = \tp\). Have substitution lemma be \(\hastp {\St(\G)}
+{\St(\e)} {\St{\tp}} \implies \hastp {(\St, \uv = \tp')(\G)} {(\St, \uv =
+\tp')(\e)} {(\St, \uv = \tp')(\tp)}\).
+- Clean up DeclVar case in Substitution.
+- Make substitution apply stores from beginning to end. (S,u1 = t')(t) :=
+S(t)[u1 |-> t'].
+- See about writing up the judgements as witnesses in LH.
+
+two options for proving infer works
+- Make 'infer' take \(\Gamma\), \(\St\), and \(\eu\) as input and return \(\e\),
+\(\tp\), \(\St'\) and a witness that of the declarative judgement (from
+soundness).
+- Take the same inputs and only return the first three outputs. Write a proof
+that the function produces the delcarative judgement itself.
 
 \end{document}

@@ -246,6 +246,22 @@ data ExprUExpr where
   EU_Fun  :: Var -> Var -> Type -> ExprU -> Expr -> Type -> ExprUExpr -> ExprUExpr
   EU_App  :: ExprU -> ExprU -> Expr -> Expr -> ExprUExpr -> ExprUExpr -> ExprUExpr
 
+
+{-@ data AlgoJudgement where
+      AJ_Bool :: g:TEnv -> s:TStore -> b:Bool
+              -> Prop (AlgoJudgement g s (EUBool b) (EBool b) TBool s)
+      AJ_Var  :: g:TEnv -> s:TStore -> x:Var -> t:{Type | lookupTEnv x g == Just t}
+              -> Prop (AlgoJudgement g s (EUVar x) (EVar x) t s)
+  @-}
+
+data AlgoJudgementP where
+  AlgoJudgement :: TEnv -> TStore -> ExprU -> Expr -> Type -> TStore -> AlgoJudgementP
+
+data AlgoJudgement where
+  AJ_Bool :: TEnv -> TStore -> Bool -> AlgoJudgement
+  AJ_Var  :: TEnv -> TStore -> Var -> Type -> AlgoJudgement
+  AJ_App  :: TEnv -> TStore -> Expr -> Expr -> Type -> Type -> AlgoJudgement -> AlgoJudgement -> AlgoJudgement
+
 -- liquidhaskell can't find ++ so I guess we'll roll our own
 {-@ reflect append @-}
 append :: [a] -> [a] -> [a]
