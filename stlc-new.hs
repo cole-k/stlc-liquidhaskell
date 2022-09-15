@@ -231,132 +231,140 @@ tEqWeakening ts1 ts2 t1 t2 pt1Eqt2
                                     ==. applySubstToType u sub (applyTStoreToType ts2' t2)
                                     ==. applyTStoreToType ts2 t2
                                     *** QED
--- tEqWeakening ts1 ts2 t1 t2 TStoreEq pt1Eqt2
---   =   applyTStoreToType ts2 t1
---   ==. applyTStoreToType ts2 t2
---     ? applyT1Eq
---     ? applyT2Eq
---     ? pt1Eqt2
---   *** QED
---   where
---     applyT1Eq =   applyTStoreToType ts1 t1
---               ==. applyTStoreToType ts2 t1
---               *** QED
---     applyT2Eq =   applyTStoreToType ts1 t2
---               ==. applyTStoreToType ts2 t2
---               *** QED
--- tEqWeakening ts1 ts2@(TSBind u sub ts2Inner) t1 t2 TStoreOneMore pt1Eqt2
---   =   applyTStoreToType ts2 t1
---   ==. applyTStoreToType ts2 t2
---     ? applyT1OneMore
---     ? applyT2OneMore
---     ? pt1Eqt2
---   *** QED
---   where
---     applyT1OneMore =   applyTStoreToType ts2 t1
---                    ==. applySubstToType u sub (applyTStoreToType ts2Inner t1)
---                    ==. applySubstToType u sub (applyTStoreToType ts1 t1)
---                    ==. applySubstToType u sub (applyTStoreToType ts1 t1)
---                    *** QED
---     applyT2OneMore =   applyTStoreToType ts2 t2
---                    ==. applySubstToType u sub (applyTStoreToType ts2Inner t2)
---                    ==. applySubstToType u sub (applyTStoreToType ts1 t2)
---                    *** QED
--- tEqWeakening _ts1 TSEmp _t1 _t2 TStoreOneMore _pt1Eqt2 = trivial ()
--- tEqWeakening _ _ _ _ TStoreNotEqOrOneMore _ = trivial ()
--- 
--- {-@ tEqEqualP :: ts1:TStore -> {ts2:TStore | isPrefixTStore ts1 ts2} -> t1:Type -> t2:Type
---               -> p:{t1 == t2} -> p2:{ts1 == ts2}
---               -> {applyTStoreToType ts2 t1 == applyTStoreToType ts2 t2}
---   @-}
--- tEqEqualP ts1 ts2 t1 t2 pt1Eqt2 pts1Eqts2
---   =   applyTStoreToType ts1 t1 
---   ==. applyTStoreToType ts2 t2
---   ?   pt1Eqt2
---   *** QED
--- 
--- {-@ applyTStoreDistributionP :: ts:TStore -> t1:Type -> t2:Type
---                              -> {applyTStoreToType ts (TArr t1 t2) == TArr (applyTStoreToType ts t1) (applyTStoreToType ts t2)}
---   @-}
--- applyTStoreDistributionP :: TStore -> Type -> Type -> Proof
--- applyTStoreDistributionP TSEmp t1 t2
---   =   applyTStoreToType TSEmp (TArr t1 t2)
---   ==. TArr (applyTStoreToType TSEmp t1) (applyTStoreToType TSEmp t2)
---   *** QED
--- applyTStoreDistributionP (TSBind u tSub ts') t1 t2
---   =   applyTStoreToType (TSBind u tSub ts') (TArr t1 t2)
---   ==. applySubstToType u tSub (applyTStoreToType ts' (TArr t1 t2))
---     ? applyTStoreDistributionP ts' t1 t2
---   ==. applySubstToType u tSub (TArr (applyTStoreToType ts' t1) (applyTStoreToType ts' t2))
---   ==. TArr (applySubstToType u tSub (applyTStoreToType ts' t1)) (applySubstToType u tSub (applyTStoreToType ts' t2))
---   ==. TArr (applyTStoreToType (TSBind u tSub ts') t1) (applyTStoreToType (TSBind u tSub ts') t2)
---   *** QED
--- 
--- {-@ tEqArrowP :: ts1:TStore -> {ts2:TStore | isPrefixTStore ts1 ts2} -> t1:Type -> t2:Type -> t3:Type -> t4:Type
---               -> p1:{applyTStoreToType ts1 t1 == applyTStoreToType ts1 t3}
---               -> p2:{applyTStoreToType ts2 t2 == applyTStoreToType ts2 t4}
---               -> {applyTStoreToType ts2 (TArr t1 t2) == applyTStoreToType ts2 (TArr t3 t4)}
---   @-}
--- tEqArrowP :: TStore -> TStore -> Type -> Type -> Type -> Type -> Proof -> Proof -> Proof
--- tEqArrowP ts1 ts2 t1 t2 t3 t4 pt1Eqt3 pt2Eqt4
---   =   applyTStoreToType ts2 (TArr t1 t2)
---     ? applyTStoreDistributionP ts2 t1 t2
---   ==. TArr (applyTStoreToType ts2 t1) (applyTStoreToType ts2 t2)
---   ==. TArr (applyTStoreToType ts2 t3) (applyTStoreToType ts2 t2)
---   ==. TArr (applyTStoreToType ts2 t3) (applyTStoreToType ts2 t4)
---     ? applyTStoreDistributionP ts2 t3 t4
---   ==. applyTStoreToType ts2 (TArr t3 t4)
---     ? pt1Eqt3'
---     ? pt2Eqt4
---   *** QED
---   where
---     pt1Eqt3' = undefined -- tEqWeakening ts1 ts2 t1 t3 pt1Eqt3
+{-@ tEqEqualP :: ts1:TStore -> {ts2:TStore | isPrefixTStore ts1 ts2} -> t1:Type -> t2:Type
+              -> p:{t1 == t2} -> p2:{ts1 == ts2}
+              -> {applyTStoreToType ts2 t1 == applyTStoreToType ts2 t2}
+  @-}
+tEqEqualP ts1 ts2 t1 t2 pt1Eqt2 pts1Eqts2
+  =   applyTStoreToType ts1 t1 
+  ==. applyTStoreToType ts2 t2
+  ?   pt1Eqt2
+  *** QED
 
--- Return LH witness that (tStore `app` t1 is literally equal to tStore `app` t2)
--- {-@ tEq :: ts:TStore -> t1:Type -> t2:Type 
---         -> Either String {ts':TStore | applyTStoreToType ts' t1 == applyTStoreToType ts' t2 && isPrefixTStore ts ts'}
---   @-}
--- tEq :: TStore -> Type -> Type -> Either String TStore
--- tEq ts t1 t2
---   | t1 == t2 = rightTStore ts
---              -- ? tEqEqualP ts ts t1 t2 tsc () ()
--- tEq ts (TArr t1 t2) (TArr t3 t4) = case tEq ts t1 t2 of
---   Left err -> leftTStore ts err
---   Right ts1 -> case tEq ts1 t3 t4 of
---     Left err -> leftTStore ts err
---     Right ts2 -> rightTStore ts2 
---                -- ? tEqArrowP ts1 ts2 t1 t2 t3 t4 tsc () ()
--- tEq ts (UVar uv) t = if uv `S.notMember` freeUVars t && uv `S.notMember` solvedUVars ts
---   then rightTStore $ TSBind uv t ts 
---   else leftTStore ts "tEq: occurs check failed"
--- tEq ts t (UVar uv) = if uv `S.notMember` freeUVars t && uv `S.notMember` solvedUVars ts
---   then rightTStore $ TSBind uv t ts
---   else leftTStore ts "tEq: occurs check failed"
--- tEq ts t1 t2
---   | applyTStoreToType ts t1 /= t1 || applyTStoreToType ts t2 /= t2 = tEq ts (applyTStoreToType ts t1) (applyTStoreToType ts t2)
--- tEq ts t1 t2 = leftTStore ts "tEq: not equal"
+{-@ applyTStoreDistributionP :: ts:TStore -> t1:Type -> t2:Type
+                             -> {applyTStoreToType ts (TArr t1 t2) == TArr (applyTStoreToType ts t1) (applyTStoreToType ts t2)}
+  @-}
+applyTStoreDistributionP :: TStore -> Type -> Type -> Proof
+applyTStoreDistributionP TSEmp t1 t2
+  =   applyTStoreToType TSEmp (TArr t1 t2)
+  ==. TArr (applyTStoreToType TSEmp t1) (applyTStoreToType TSEmp t2)
+  *** QED
+applyTStoreDistributionP (TSBind u tSub ts') t1 t2
+  =   applyTStoreToType (TSBind u tSub ts') (TArr t1 t2)
+  ==. applySubstToType u tSub (applyTStoreToType ts' (TArr t1 t2))
+    ? applyTStoreDistributionP ts' t1 t2
+  ==. applySubstToType u tSub (TArr (applyTStoreToType ts' t1) (applyTStoreToType ts' t2))
+  ==. TArr (applySubstToType u tSub (applyTStoreToType ts' t1)) (applySubstToType u tSub (applyTStoreToType ts' t2))
+  ==. TArr (applyTStoreToType (TSBind u tSub ts') t1) (applyTStoreToType (TSBind u tSub ts') t2)
+  *** QED
 
--- infer :: TState -> TEnv -> ExprU -> Either String (Expr, Type, TState, DeclJudgement)
--- infer ts g EUUnit = Right (EUnit, TUnit, ts, DJ_Unit g)
--- infer ts g (EUVar v) = case lookupTEnv v g of
---   Left err -> Left err
---   Right t  -> Right (EVar v, t, ts, DJ_Var g v t)
--- infer ts g (EUApp eu1 eu2) =
---   let (u, ts0) = freshUVar ts
---    in case infer ts0 g eu1 of
---         Left err -> Left err
---         Right (e1, tArr, ts1, e1_tArr) -> 
---           case infer ts1 g eu2 of
---             Left err -> Left err
---             Right (e2, tArg, ts2, e2_tArg) ->
---               case tEq (tStore ts2) tArr (TArr tArg (UVar u)) of
---                 Left err -> Left err
---                 Right tStore' -> Right (EApp e1 e2, UVar u, ts2 {tStore = tStore'}, DJ_App g e1 e2 tArg (UVar u) e1_tArr e2_tArg)
--- infer ts g (EULam x eu) =
---   let (u, ts0) = freshUVar ts
---    in case infer ts0 (TBind x (UVar u) g) eu of
---         Left err -> Left err
---         Right (e, tRet, ts1, e_tRet) -> Right (ELam x (UVar u) e, TArr (UVar u) tRet, ts1, DJ_Lam g x (UVar u) e tRet e_tRet)
+{-@ tEqArrowP :: ts1:TStore -> {ts2:TStore | isPrefixTStore ts1 ts2} -> t1:Type -> t2:Type -> t3:Type -> t4:Type
+              -> p1:{applyTStoreToType ts1 t1 == applyTStoreToType ts1 t3}
+              -> p2:{applyTStoreToType ts2 t2 == applyTStoreToType ts2 t4}
+              -> {applyTStoreToType ts2 (TArr t1 t2) == applyTStoreToType ts2 (TArr t3 t4)}
+  @-}
+tEqArrowP :: TStore -> TStore -> Type -> Type -> Type -> Type -> Proof -> Proof -> Proof
+tEqArrowP ts1 ts2 t1 t2 t3 t4 pt1Eqt3 pt2Eqt4
+  =   applyTStoreToType ts2 (TArr t1 t2)
+    ? applyTStoreDistributionP ts2 t1 t2
+  ==. TArr (applyTStoreToType ts2 t1) (applyTStoreToType ts2 t2)
+  ==. TArr (applyTStoreToType ts2 t3) (applyTStoreToType ts2 t4)
+  ==. TArr (applyTStoreToType ts2 t3) (applyTStoreToType ts2 t4)
+    ? applyTStoreDistributionP ts2 t3 t4
+  ==. applyTStoreToType ts2 (TArr t3 t4)
+    ? pt1Eqt3'
+    ? pt2Eqt4
+  *** QED
+  where
+    pt1Eqt3' = tEqWeakening ts1 ts2 t1 t3 pt1Eqt3
+
+{-@ bindIsPrefixP :: ts:TStore -> {u:UVar | applyTStoreToType ts (UVar u) == UVar u } -> {t:Type | applyTStoreToType ts t == t}
+                  -> { applyTStoreToType (TSBind u t ts) (UVar u) == applyTStoreToType (TSBind u t ts) t && isPrefixTStore ts (TSBind u t ts) }
+  @-}
+bindIsPrefixP :: TStore -> UVar -> Type -> Proof
+bindIsPrefixP u t ts
+  =   applyTStoreToType (TSBind u t ts) (UVar u)
+  ==. applySubstToType u t (applyTStoreToType ts (UVar u))
+      ? undefined
+  ==. applySubstToType u t (UVar u)
+  ==. t
+      ? undefined
+  ==. applyTStoreToType (TSBind u t ts) t
+
+-- TODO
+-- 08/11/22
+-- prove totality using the contextual size measure (if that doesn't work, need
+-- a lemma about unsovled variables decreasing for subsequent contexts -- then
+-- use # of unsolved variables as the first part of the measure and contextual
+-- size as the second) -- contextual size measure from Complete and Easy (in
+-- essence the idea is that you add a penalty to the size of a type for every
+-- uvar that has a solution in the store). Size = (size of solved uvar's type) +
+-- size of the rest of the type + 1.
+-- 
+-- * Prove applyTStoreToType idempotent
+--   - Requires that we have a no cycle precondition on TStore
+--   - Also it might not be actually idempotent (only idempotent after applying
+--     N times, look into this)
+-- * Once proven idempotent, lines 308-309 (recursive appliction of the type
+--   store) should logically never cause infinite recursion, although they might
+--   require some convincing to show the function terminates.
+-- * This can then hopefully be used to conclude that the preconditions for bindIsPrefixP
+--   are satisfied (i.e. the types are fully expressed); rename bindIsPrefixP.
+--   If not, will need to case on the results of applyTStoreToType inside the
+--   "base" cases (i.e. they no longer are base cases).
+
+{-@ tEq :: ts:TStore -> t1:Type -> t2:Type 
+        -> Either String {ts':TStore | applyTStoreToType ts' t1 == applyTStoreToType ts' t2 && isPrefixTStore ts ts'}
+  @-}
+tEq :: TStore -> Type -> Type -> Either String TStore
+tEq ts t1 t2
+  | t1 == t2 = rightTStore ts
+             -- ? tEqEqualP ts ts t1 t2 tsc () ()
+tEq ts t1 t2
+  | applyTStoreToType ts t1 /= t1 || applyTStoreToType ts t2 /= t2 = tEq ts (applyTStoreToType ts t1) (applyTStoreToType ts t2)
+tEq ts (TArr t1 t2) (TArr t3 t4) = case tEq ts t1 t2 of
+  Left err -> leftTStore ts err
+  Right ts1 -> case tEq ts1 t3 t4 of
+    Left err -> leftTStore ts err
+    Right ts2 -> rightTStore ts2 
+               -- ? tEqArrowP ts1 ts2 t1 t2 t3 t4 tsc () ()
+-- suppose that t /= applyTStoreToType ts t
+-- ts' = TSBind u t ts
+-- applyTStoreToType ts' (UVar uv) == applyTStoreToType ts' t
+-- t == applyTStoreToType (TSBind u t ts) t
+-- t == applySubstToType u t (applyTStoreToType ts t)
+-- t == applySubstToType u t ^^^^^^^^^^^^^^^^^^^^^^^^
+tEq ts (UVar uv) t = if uv `S.notMember` freeUVars t && uv `S.notMember` solvedUVars ts
+  then rightTStore $ TSBind uv t ts 
+    ? bindIsPrefixP uv t ts
+  else leftTStore ts "tEq: occurs check failed"
+tEq ts t (UVar uv) = if uv `S.notMember` freeUVars t && uv `S.notMember` solvedUVars ts
+  then rightTStore $ TSBind uv t ts
+    ? bindIsPrefixP uv t ts
+  else leftTStore ts "tEq: occurs check failed"
+tEq ts t1 t2 = leftTStore ts "tEq: not equal"
+
+infer :: TState -> TEnv -> ExprU -> Either String (Expr, Type, TState, DeclJudgement)
+infer ts g EUUnit = Right (EUnit, TUnit, ts, DJ_Unit g)
+infer ts g (EUVar v) = case lookupTEnv v g of
+  Left err -> Left err
+  Right t  -> Right (EVar v, t, ts, DJ_Var g v t)
+infer ts g (EUApp eu1 eu2) =
+  let (u, ts0) = freshUVar ts
+   in case infer ts0 g eu1 of
+        Left err -> Left err
+        Right (e1, tArr, ts1, e1_tArr) -> 
+          case infer ts1 g eu2 of
+            Left err -> Left err
+            Right (e2, tArg, ts2, e2_tArg) ->
+              case tEq (tStore ts2) tArr (TArr tArg (UVar u)) of
+                Left err -> Left err
+                Right tStore' -> Right (EApp e1 e2, UVar u, ts2 {tStore = tStore'}, DJ_App g e1 e2 tArg (UVar u) e1_tArr e2_tArg)
+infer ts g (EULam x eu) =
+  let (u, ts0) = freshUVar ts
+   in case infer ts0 (TBind x (UVar u) g) eu of
+        Left err -> Left err
+        Right (e, tRet, ts1, e_tRet) -> Right (ELam x (UVar u) e, TArr (UVar u) tRet, ts1, DJ_Lam g x (UVar u) e tRet e_tRet)
 
 {-@ measure prop :: a -> b           @-}
 {-@ type Prop E = {v:_ | prop v = E} @-}
